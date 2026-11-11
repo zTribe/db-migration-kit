@@ -110,6 +110,12 @@ export function normalizeSchemaCatalog(value){
     return [kind,list];
   }));
 }
+/** Read from an existing migration-lock session without nesting transactions. */
+export async function readSchemaCatalogOnClient(client,schemas){
+  if(!Array.isArray(schemas)||!schemas.length)throw new Error("schema list required");
+  const {rows}=await client.query(SQL,[schemas]);
+  return normalizeSchemaCatalog(rows[0]);
+}
 export async function readSchemaCatalog(pool,schemas,{statementTimeoutMs=10000}={}){
   if(!Array.isArray(schemas)||!schemas.length||schemas.some(s=>typeof s!=="string"||!s))
     throw new Error("nonempty schema name list required");
