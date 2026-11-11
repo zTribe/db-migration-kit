@@ -44,6 +44,10 @@ export async function collectSecurityCatalog(pool, rules = {}) {
     ...(rules.deniedSchemaUsageRoles ?? []), ...(rules.deniedSchemaCreateRoles ?? []),
     ...Object.keys(rules.allowedSchemaPrivileges ?? {}),
     ...Object.keys(rules.allowedTablePrivileges ?? {}),
+    ...(rules.objectPolicies ?? []).flatMap(item=>[
+      ...Object.keys(item.privileges ?? {}),
+      ...(item.kind === "role" ? [item.key] : []),
+    ]),
   ])];
   const client = await pool.connect();
   let active = false;
