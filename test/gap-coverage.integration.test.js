@@ -93,8 +93,8 @@ test("PG17: strict auto baseline records verified history, fails closed on catal
   await pool.query(`CREATE SCHEMA ${schema}`);
   await pool.query(`CREATE TABLE ${schema}.messages(id integer, corrupt text)`);
   await assert.rejects(()=>applyMigrations(pool,config),/automatic baseline refused/);
-  const ledger=await pool.query("SELECT pg_catalog.to_regclass($1) AS target",[`${schema}.schema_migrations`]);
-  assert.equal(ledger.rows[0].target,null,"mismatched legacy catalog must be rejected before ledger DDL");
+  const ledgerPresence=await pool.query("SELECT pg_catalog.to_regclass($1) AS target",[`${schema}.schema_migrations`]);
+  assert.equal(ledgerPresence.rows[0].target,null,"mismatched legacy catalog must be rejected before ledger DDL");
  }finally{
   await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(()=>{});
   await rm(dir,{recursive:true,force:true});await pool.end();
