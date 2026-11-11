@@ -1,6 +1,7 @@
 import { loadManifest } from "./checksum.js";
 import { qualifiedName, quoteIdentifier } from "./identifiers.js";
 import { withMigrationLock } from "./lock.js";
+import { hardenMigrationLedger } from "./ledger-security.js";
 
 const DEFAULTS = {
   schema: "public",
@@ -72,7 +73,17 @@ export async function applyMigrations(pool, options) {
     if (preflight.drift.length) throw new Error(`checksum/name mismatch for applied migration(s): ${preflight.drift.map(row => row.version).join(", ")}; refusing writes`);
     if (preflight.invalidSources.length) throw new Error("invalid ledger source; refusing writes");
     if (typeof config.verifyTarget === "function") await config.verifyTarget(client, config);
-    await ensureLedger(client, config.schema, config.ledgerTable);
+    // Make ledger creation and optional ACL hardening atomic: no exposure
+    // window for a newly created ledger.
+    await client.query("BEGIN");
+    try {
+      await ensureLedger(client, config.schema, config.ledgerTable);
+      if(config.ledgerSecurity) await hardenMigrationLedger(client, {...config, ...config.ledgerSecurity});
+      await client.query("COMMIT");
+    } catch(error) {
+      await client.query("ROLLBACK").catch(()=>undefined);
+      throw error;
+    }
     if (typeof config.beforeMigrations === "function") await config.beforeMigrations(client, config);
     const rows = await readLedger(client, config.schema, config.ledgerTable);
     const report = compareLedger(rows, migrations, config);
@@ -136,6 +147,7 @@ export async function baselineMigrations(pool, options) {
     await client.query("BEGIN");
     try {
       await ensureLedger(client, config.schema, config.ledgerTable);
+      if(config.ledgerSecurity) await hardenMigrationLedger(client, {...config, ...config.ledgerSecurity});
       const already = new Set(previous.applied.map(x => x.version));
       const recorded = [];
       for (const migration of migrations.slice(0, lastIndex + 1)) {
