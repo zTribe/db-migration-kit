@@ -36,6 +36,43 @@ export async function inspectRuntimeSecurity(pool, rules) {
   const failures = [];
   const requiredRls = new Set(rules.requireRlsOn ?? []);
   const requiredForceRls = new Set(rules.requireForceRlsOn ?? []);
+  const existingTables = new Set(snapshot.tables.map(table => `${table.schema_name}.${table.relname}`));
+  for (const table of new Set([...(rules.requiredTables ?? []), ...requiredRls, ...requiredForceRls])) {
+    if (!existingTables.has(table)) failures.push(`${table}: required table is missing`);
+  }
+  const existingFunctions = new Set(snapshot.functions.map(fn => `${fn.schema_name}.${fn.proname}(${fn.identity_args})`));
+  for (const fn of rules.requiredFunctions ?? []) {
+    if (!existingFunctions.has(fn)) failures.push(`${fn}: required function is missing`);
+  }
+  for (const [table, owner] of Object.entries(rules.expectedTableOwners ?? {})) {
+    const found = snapshot.tables.find(t => `${t.schema_name}.${t.relname}` === table);
+    if (!found) {
+      if (!existingTables.has(table)) failures.push(`${table}: expected owner ${owner}, but table is missing`);
+    } else if (found.owner_name !== owner) failures.push(`${table}: expected owner ${owner}; actual ${found.owner_name}`);
+  }
+  for (const [fn, owner] of Object.entries(rules.expectedFunctionOwners ?? {})) {
+    const found = snapshot.functions.find(f => `${f.schema_name}.${f.proname}(${f.identity_args})` === fn);
+    if (!found) {
+      if (!existingFunctions.has(fn)) failures.push(`${fn}: expected owner ${owner}, but function is missing`);
+    } else if (found.owner_name !== owner) failures.push(`${fn}: expected owner ${owner}; actual ${found.owner_name}`);
+  }
+  const requiredRoles = [...new Set([...(rules.requiredRoles ?? []), ...(rules.forbidBypassRlsRoles ?? []), ...(rules.forbidSuperuserRoles ?? [])])];
+  if (requiredRoles.length) {
+    const roleResult = await pool.query(
+      "SELECT rolname, rolsuper, rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])",
+      [requiredRoles],
+    );
+    const roleMap = new Map(roleResult.rows.map(role => [role.rolname, role]));
+    for (const role of requiredRoles) {
+      if (!roleMap.has(role)) failures.push(`${role}: required role is missing`);
+    }
+    for (const name of rules.forbidBypassRlsRoles ?? []) {
+      if (roleMap.get(name)?.rolbypassrls) failures.push(`${name}: role has BYPASSRLS`);
+    }
+    for (const name of rules.forbidSuperuserRoles ?? []) {
+      if (roleMap.get(name)?.rolsuper) failures.push(`${name}: role has SUPERUSER`);
+    }
+  }
   for (const table of snapshot.tables) {
     const key = `${table.schema_name}.${table.relname}`;
     if (requiredRls.has(key) && !table.relrowsecurity) failures.push(`${key}: RLS is disabled`);
