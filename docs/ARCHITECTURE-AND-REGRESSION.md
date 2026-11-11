@@ -16,19 +16,19 @@ Status: implementation in progress. This is a checklist, not a claim that all ch
 | Incident | Required regression | Current status |
 |---|---|---|
 | Applied SQL edited; checksum drift | Reject historical drift without touching DB | Implemented |
-| Existing DB baseline vs fresh install | Both histories must yield equivalent catalog | Adapter-specific, pending |
-| Migration uses wrong function owner | Actual pg_proc owner assertions | Partial |
-| SET ROLE lacks membership | Execute migrations as realistic non-superuser roles | Pending |
+| Existing DB baseline vs fresh install | Both histories must yield equivalent catalog | Shared verified baseline API + PG fixtures implemented; full service SQL-chain parity pending |
+| Migration uses wrong function owner | Actual pg_proc owner assertions | Catalog owner checks and non-superuser PG regression implemented; service matrices pending |
+| SET ROLE lacks membership | Execute migrations as realistic non-superuser roles | Real non-superuser PG17 regression implemented |
 | SQL syntax error only discovered on deployment | Execute entire migration chain in PG17 | Adapter-specific, pending |
 | RLS / schema / function grants differ | Effective catalog privileges for each runtime role | Partial |
 | SECURITY DEFINER with unsafe search_path | Enumerate all functions, deny unsafe path and PUBLIC execute | Partial |
-| Wrong Supabase project/Dev vs Main | Explicit project identity + DB metadata preflight | Pending |
+| Wrong Supabase project/Dev vs Main | Explicit project identity + DB metadata preflight | DB-controlled marker verifier and remote Dev CLI gate implemented; provisioning/consumer integration pending |
 | Dev/Main diverged migration history | Separate ledgers, immutable history, audit before apply | Partial |
 | Reorg-safe balance API role cleanup | Representative permission/owner assertions | Pending |
 | Failed migration leaves partial state | Transaction rollback and ledger atomicity | Implemented for transactional SQL |
 | Nontransactional SQL leaves partial state | Explicit opt-in; recovery playbook | Opt-in guard implemented, recovery pending |
 | Audit accidentally writes | READ ONLY transaction and before/after ledger check | Implemented |
-| CLI points at Production | Reject unless explicit verified identity policy | Pending; current --allow-remote alone is insufficient |
+| CLI points at Production | Reject unless explicit verified identity policy | Remote CLI apply requires verified Dev DB marker; production still blocked |
 | CI skipped PG tests after unit failure | Independent CI jobs | Implemented in shared repo |
 | Manifest traversal or unexpected order | Canonical path and ordered manifest validation | Implemented |
 
@@ -47,8 +47,8 @@ Status: implementation in progress. This is a checklist, not a claim that all ch
 
 ## Known gaps to resolve before adoption
 
-- Baseline checksum policy currently exempts baseline rows from drift comparison. Define and test canonical baseline evidence.
-- SECURITY DEFINER inspection needs strict expected function inventory and exact safe path policy.
+- Strict baseline checksums now apply to ordinary rows; exceptional Indexer historical marker needs explicit pinned ledger+SQL checksum configuration in its adapter, not yet integrated.
+- SECURITY DEFINER inventory and exact path checks are available; project-specific full function/ACL/owner inventories still need integration and review.
 - Nontransactional SQL needs idempotence/recovery protocol and dedicated tests.
-- CLI must not accept a remote production target merely because --allow-remote is passed.
+- Remote CLI has an independent Dev identity marker gate; actual Dev marker provisioning and least-privilege migration identity still need operational review.
 - No end-to-end adapter migration has yet been proven for both services.
