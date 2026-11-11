@@ -95,7 +95,7 @@ export async function collectSecurityCatalog(pool, rules = {}) {
           FROM pg_catalog.unnest(p.polroles) AS role_ids(role_id)
           LEFT JOIN pg_catalog.pg_roles r ON r.oid=role_ids.role_id
           ORDER BY 1
-        ) AS roles,
+        )::text[] AS roles,
         pg_catalog.pg_get_expr(p.polqual,p.polrelid) AS using_expr,
         pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid) AS check_expr
       FROM pg_catalog.pg_policy p
