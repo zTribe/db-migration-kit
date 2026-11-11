@@ -74,6 +74,44 @@ export async function inspectRuntimeSecurity(pool, rules) {
       }
     }
   }
+  // Check effective schema privileges for runtime roles, including inherited grants.
+  for (const role of rules.deniedSchemaUsageRoles ?? []) {
+    for (const schema of schemas) {
+      const result = await pool.query("SELECT pg_catalog.has_schema_privilege($1,$2,'USAGE') AS allowed", [role, schema]);
+      if (result.rows[0]?.allowed) failures.push(`${role} has USAGE on schema ${schema}`);
+    }
+  }
+  for (const role of rules.deniedTableSelectRoles ?? []) {
+    for (const table of snapshot.tables) {
+      const key = `${table.schema_name}.${table.relname}`;
+      const result = await pool.query("SELECT pg_catalog.has_table_privilege($1,$2,'SELECT') AS allowed", [role, `${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.relname)}`]);
+      if (result.rows[0]?.allowed) failures.push(`${role} has effective SELECT on ${key}`);
+    }
+  }
+  for (const role of rules.deniedTableDmlRoles ?? []) {
+    for (const table of snapshot.tables) {
+      const key = `${table.schema_name}.${table.relname}`;
+      const result = await pool.query("SELECT pg_catalog.has_table_privilege($1,$2,'SELECT') AS allowed", [role, `${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.relname)}`]);
+      if (rules.denySelectForDmlRoles && result.rows[0]?.allowed) failures.push(`${role} has effective SELECT on ${key}`);
+    }
+  }
+  for (const [role, privileges] of Object.entries(rules.allowedSchemaPrivileges ?? {})) {
+    for (const schema of schemas) {
+      for (const privilege of privileges) {
+        const result = await pool.query("SELECT pg_catalog.has_schema_privilege($1,$2,$3) AS allowed", [role, schema, privilege]);
+        if (!result.rows[0]?.allowed) failures.push(`${role} lacks ${privilege} on schema ${schema}`);
+      }
+    }
+  }
+  for (const [role, privileges] of Object.entries(rules.allowedTablePrivileges ?? {})) {
+    for (const table of snapshot.tables) {
+      const key = `${table.schema_name}.${table.relname}`;
+      for (const privilege of privileges) {
+        const result = await pool.query("SELECT pg_catalog.has_table_privilege($1,$2,$3) AS allowed", [role, `${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.relname)}`, privilege]);
+        if (!result.rows[0]?.allowed) failures.push(`${role} lacks ${privilege} on ${key}`);
+      }
+    }
+  }
   for (const role of rules.deniedSchemaCreateRoles ?? []) {
     for (const schema of schemas) {
       const result = await pool.query("SELECT pg_catalog.has_schema_privilege($1,$2,'CREATE') AS allowed", [role, schema]);
