@@ -29,16 +29,24 @@ async function readLedger(client, schema, table) {
   return result.rows;
 }
 
-function compareLedger(rows, migrations) {
+function compareLedger(rows, migrations, config = {}) {
   const byVersion = new Map(rows.map(row => [row.version, row]));
   const expected = new Map(migrations.map(item => [item.version, item]));
   const unknown = rows.filter(row => !expected.has(row.version));
   const drift = rows.filter(row => {
     const item = expected.get(row.version);
-    return item && row.source !== "baseline" && (row.name !== item.name || row.checksum !== item.checksum);
+    if (!item) return false;
+    if (row.name !== item.name) return true;
+    if (row.source === "baseline") {
+      const legacy = config.legacyBaselineChecksums?.[row.version];
+      if (legacy) {
+        return row.checksum !== legacy.ledgerChecksum ||
+          item.checksum !== legacy.sqlChecksum;
+      }
+    }
+    return row.checksum !== item.checksum;
   });
   const pending = migrations.filter(item => !byVersion.has(item.version));
-  const missingHistory = rows.filter(row => !expected.has(row.version));
   const invalidSources = rows.filter(row => row.source !== "baseline" && row.source !== "migration");
   return { applied: rows, pending, unknown, drift, invalidSources, ok: unknown.length === 0 && drift.length === 0 && invalidSources.length === 0 };
 }
@@ -48,7 +56,7 @@ export async function inspectMigrations(pool, options) {
   const migrations = await loadManifest(config);
   const client = await pool.connect();
   try {
-    return compareLedger(await readLedger(client, config.schema, config.ledgerTable), migrations);
+    return compareLedger(await readLedger(client, config.schema, config.ledgerTable), migrations, config);
   } finally {
     client.release();
   }
@@ -59,7 +67,7 @@ export async function applyMigrations(pool, options) {
   const migrations = await loadManifest(config);
   const appliedNow = [];
   return withMigrationLock(pool, config, async client => {
-    const preflight = compareLedger(await readLedger(client, config.schema, config.ledgerTable), migrations);
+    const preflight = compareLedger(await readLedger(client, config.schema, config.ledgerTable), migrations, config);
     if (preflight.unknown.length) throw new Error(`unknown applied migration(s): ${preflight.unknown.map(row => row.version).join(", ")}; refusing writes`);
     if (preflight.drift.length) throw new Error(`checksum/name mismatch for applied migration(s): ${preflight.drift.map(row => row.version).join(", ")}; refusing writes`);
     if (preflight.invalidSources.length) throw new Error("invalid ledger source; refusing writes");
@@ -67,7 +75,7 @@ export async function applyMigrations(pool, options) {
     await ensureLedger(client, config.schema, config.ledgerTable);
     if (typeof config.beforeMigrations === "function") await config.beforeMigrations(client, config);
     const rows = await readLedger(client, config.schema, config.ledgerTable);
-    const report = compareLedger(rows, migrations);
+    const report = compareLedger(rows, migrations, config);
     if (report.unknown.length) throw new Error(`database contains unknown migration(s): ${report.unknown.map(x=>x.version).join(", ")}`);
     if (report.drift.length) throw new Error(`checksum/name mismatch for applied migration(s): ${report.drift.map(x=>x.version).join(", ")}; create a new migration instead of editing history`);
     if (report.invalidSources.length) throw new Error("migration ledger contains invalid source values");
@@ -119,7 +127,7 @@ export async function baselineMigrations(pool, options) {
   if (lastIndex < 0) throw new Error("baselineThrough is not in the migration manifest");
   return withMigrationLock(pool, config, async client => {
     if (typeof config.verifyTarget === "function") await config.verifyTarget(client, config);
-    const previous = compareLedger(await readLedger(client, config.schema, config.ledgerTable), migrations);
+    const previous = compareLedger(await readLedger(client, config.schema, config.ledgerTable), migrations, config);
     if (!previous.ok) throw new Error("baseline refused due to unknown migrations or checksum drift");
     const expectedPrefix = new Set(migrations.slice(0, lastIndex + 1).map(x => x.version));
     if (previous.applied.some(x => !expectedPrefix.has(x.version))) throw new Error("baseline refused: migrations already recorded after baselineThrough");
@@ -157,7 +165,7 @@ export async function auditMigrations(pool, options) {
     inTransaction = true;
     await client.query("SET LOCAL statement_timeout='10s'");
     await client.query("SET LOCAL lock_timeout='3s'");
-    const report = compareLedger(await readLedger(client, config.schema, config.ledgerTable), migrations);
+    const report = compareLedger(await readLedger(client, config.schema, config.ledgerTable), migrations, config);
     await client.query("COMMIT");
     inTransaction = false;
     if (!report.ok) throw Object.assign(new Error("migration audit failed: unknown versions or checksum drift"), { report });
