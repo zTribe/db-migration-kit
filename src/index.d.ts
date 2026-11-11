@@ -22,7 +22,6 @@ export function auditSchemaCatalog(pool:any,options:{schemas:string[];expected:a
 export function autoBaselineVerifiedCatalog(client:any,config:MigrationConfig,migrations:any[]):Promise<string[]>;
 export function omitMigrationLedger(snapshot:any,schema:string,ledgerTable:string):any;
 export function inspectConcurrentIndex(client:any,target:{schema:string;index:string}):Promise<any>;
-export function dropInvalidIndexForRetry(client:any,target:{schema:string;index:string;table:string;confirm:boolean}):Promise<any>;
 export function recoverInvalidConcurrentIndex(pool:any,config:MigrationConfig,target:{schema:string;index:string;table:string;confirm:boolean}):Promise<any>;
 export function inventorySecurityObjects(snapshot:any):any;
 export function evaluateObjectPolicies(snapshot:any,rules:any):any[];
