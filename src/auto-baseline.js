@@ -49,3 +49,26 @@ export async function autoBaselineVerifiedCatalog(client, config, migrations){
   }catch(error){await client.query("ROLLBACK").catch(()=>{});throw error}
   return recorded;
 }
+
+/**
+ * Fail before ledger/schema DDL if an existing untracked database doesn't
+ * match its independently approved snapshot.
+ */
+export async function preflightAutoBaselineCatalog(client,config) {
+  const options=config.autoBaseline;
+  if(!options)return {eligible:false};
+  if(!options.expectedCatalog || !Array.isArray(options.schemas) || !options.schemas.length)
+    throw new Error("autoBaseline expectedCatalog and schemas required");
+  const q=qualifiedName(config.schema,config.ledgerTable);
+  const exists=(await client.query("SELECT pg_catalog.to_regclass($1) IS NOT NULL AS present",[q])).rows[0].present;
+  if(exists){
+    const count=await client.query(`SELECT count(*)::int AS n FROM ${q}`);
+    if(count.rows[0].n) return {eligible:false};
+  }
+  const live=omitMigrationLedger(await readSchemaCatalogOnClient(client,options.schemas),config.schema,config.ledgerTable);
+  const match=compareSchemaCatalog(options.expectedCatalog,live);
+  if(match.ok) return {eligible:true};
+  if(!live.tables.length&&!live.functions.length&&!live.sequences.length&&!live.publications.length)
+    return {eligible:false,fresh:true};
+  throw new Error(`automatic baseline refused before writes: live schema differs from approved catalog; ${match.differences.slice(0,5).map(x=>x.section+":"+x.key+" "+x.code).join("; ")}`);
+}
