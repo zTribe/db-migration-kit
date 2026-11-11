@@ -6,7 +6,7 @@ const SECTIONS=["tables","columns","constraints","indexes","triggers","functions
 export function omitMigrationLedger(snapshot,schema,ledgerTable){
   const result=structuredClone(snapshot);
   for(const section of SECTIONS) result[section]=result[section].filter(item=>{
-    if(section==="tables" || section==="indexes")return !(section==="tables"&&item.schema_name===schema&&item.name===ledgerTable);
+    if(section==="tables")return !(item.schema_name===schema&&item.name===ledgerTable);
     return !(item.schema_name===schema&&item.table_name===ledgerTable);
   });
   return result;
