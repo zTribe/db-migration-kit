@@ -5,3 +5,6 @@ export { verifyDatabaseTarget } from "./identity.js";
 export { collectSecurityCatalog } from "./catalog.js";
 export { evaluateSecurityPolicy } from "./policy.js";
 export { buildSecurityAudit } from "./audit-report.js";
+export { inventorySecurityObjects, OBJECT_KINDS, OBJECT_MODEL_VERSION } from "./object-model.js";
+export { evaluateObjectPolicies } from "./object-policy.js";
+export { generateCandidatePolicy, assertApprovedSecurityPolicy } from "./candidate.js";
