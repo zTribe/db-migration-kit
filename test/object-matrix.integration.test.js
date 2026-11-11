@@ -35,7 +35,7 @@ test("PG17: inheritance, column grants, sequence ACL, RLS policy and candidate f
       {kind:"policy",key:`${s}.messages.readable`,permissive:true,command:"r",roles:["PUBLIC"]},
     ]};
     const report=await inspectRuntimeSecurity(pool,base);
-    assert.deepEqual(report.failures,[],report.failures.join("\n"));
+    assert.deepEqual(report.failures,[],JSON.stringify({policies:report.snapshot.policies,inventory:report.snapshot.inventory.objects.filter(x=>x.kind==="policy"),objectPolicies:base.objectPolicies.filter(x=>x.kind==="policy")}));
     assert.equal(report.snapshot.memberships.some(m=>m.member===child&&m.parent===parent&&m.inherit_option),true);
     assert.ok(report.snapshot.inventory.objects.some(x=>x.kind==="policy"&&x.key===`${s}.messages.readable`));
     assert.ok(report.snapshot.inventory.objects.some(x=>x.kind==="column"&&x.key===`${s}.messages.secret`));
