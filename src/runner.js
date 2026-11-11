@@ -1,5 +1,6 @@
 import { loadManifest } from "./checksum.js";
 import { qualifiedName, quoteIdentifier } from "./identifiers.js";
+import { withMigrationLock } from "./lock.js";
 
 const DEFAULTS = {
   schema: "public",
@@ -56,12 +57,8 @@ export async function inspectMigrations(pool, options) {
 export async function applyMigrations(pool, options) {
   const config = { ...DEFAULTS, ...options };
   const migrations = await loadManifest(config);
-  const client = await pool.connect();
-  let locked = false;
   const appliedNow = [];
-  try {
-    await client.query("SELECT pg_catalog.pg_advisory_lock(pg_catalog.hashtextextended($1,0))", [config.lockName]);
-    locked = true;
+  return withMigrationLock(pool, config, async client => {
     const preflight = compareLedger(await readLedger(client, config.schema, config.ledgerTable), migrations);
     if (preflight.unknown.length) throw new Error(`unknown applied migration(s): ${preflight.unknown.map(row => row.version).join(", ")}; refusing writes`);
     if (preflight.drift.length) throw new Error(`checksum/name mismatch for applied migration(s): ${preflight.drift.map(row => row.version).join(", ")}; refusing writes`);
@@ -105,12 +102,7 @@ export async function applyMigrations(pool, options) {
       byVersion.add(migration.version);
     }
     return { applied: appliedNow, total: migrations.length };
-  } finally {
-    if (locked) {
-      await client.query("SELECT pg_catalog.pg_advisory_unlock(pg_catalog.hashtextextended($1,0))", [config.lockName]).catch(() => undefined);
-    }
-    client.release();
-  }
+  });
 }
 
 /**
@@ -125,11 +117,7 @@ export async function baselineMigrations(pool, options) {
   const migrations = await loadManifest(config);
   const lastIndex = migrations.findIndex(item => item.version === config.baselineThrough);
   if (lastIndex < 0) throw new Error("baselineThrough is not in the migration manifest");
-  const client = await pool.connect();
-  let locked = false;
-  try {
-    await client.query("SELECT pg_catalog.pg_advisory_lock(pg_catalog.hashtextextended($1,0))", [config.lockName]);
-    locked = true;
+  return withMigrationLock(pool, config, async client => {
     if (typeof config.verifyTarget === "function") await config.verifyTarget(client, config);
     const previous = compareLedger(await readLedger(client, config.schema, config.ledgerTable), migrations);
     if (!previous.ok) throw new Error("baseline refused due to unknown migrations or checksum drift");
@@ -156,10 +144,7 @@ export async function baselineMigrations(pool, options) {
       await client.query("ROLLBACK").catch(() => undefined);
       throw error;
     }
-  } finally {
-    if (locked) await client.query("SELECT pg_catalog.pg_advisory_unlock(pg_catalog.hashtextextended($1,0))", [config.lockName]).catch(() => undefined);
-    client.release();
-  }
+  });
 }
 
 export async function auditMigrations(pool, options) {
