@@ -90,8 +90,12 @@ export async function collectSecurityCatalog(pool, rules = {}) {
     const policies=(await client.query(`
       SELECT n.nspname AS schema_name,c.relname AS table_name,
         p.polname AS policy_name,p.polpermissive AS permissive,p.polcmd AS command,
-        CASE WHEN p.polroles=ARRAY[0]::oid[] THEN ARRAY['PUBLIC']::text[]
-             ELSE ARRAY(SELECT rolname FROM pg_catalog.pg_roles WHERE oid=ANY(p.polroles) ORDER BY rolname) END AS roles,
+        ARRAY(
+          SELECT CASE WHEN role_id = 0::oid THEN 'PUBLIC' ELSE r.rolname END
+          FROM pg_catalog.unnest(p.polroles) AS role_ids(role_id)
+          LEFT JOIN pg_catalog.pg_roles r ON r.oid=role_ids.role_id
+          ORDER BY 1
+        ) AS roles,
         pg_catalog.pg_get_expr(p.polqual,p.polrelid) AS using_expr,
         pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid) AS check_expr
       FROM pg_catalog.pg_policy p
