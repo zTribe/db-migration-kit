@@ -37,7 +37,9 @@ function compareLedger(rows, migrations) {
     return item && row.source !== "baseline" && (row.name !== item.name || row.checksum !== item.checksum);
   });
   const pending = migrations.filter(item => !byVersion.has(item.version));
-  return { applied: rows, pending, unknown, drift, ok: unknown.length === 0 && drift.length === 0 };
+  const missingHistory = rows.filter(row => !expected.has(row.version));
+  const invalidSources = rows.filter(row => row.source !== "baseline" && row.source !== "migration");
+  return { applied: rows, pending, unknown, drift, invalidSources, ok: unknown.length === 0 && drift.length === 0 && invalidSources.length === 0 };
 }
 
 export async function inspectMigrations(pool, options) {
@@ -60,19 +62,23 @@ export async function applyMigrations(pool, options) {
   try {
     await client.query("SELECT pg_catalog.pg_advisory_lock(pg_catalog.hashtextextended($1,0))", [config.lockName]);
     locked = true;
+    const preflight = compareLedger(await readLedger(client, config.schema, config.ledgerTable), migrations);
+    if (!preflight.ok) throw new Error("existing migration ledger failed preflight; refusing any migration writes");
+    if (typeof config.verifyTarget === "function") await config.verifyTarget(client, config);
     await ensureLedger(client, config.schema, config.ledgerTable);
     if (typeof config.beforeMigrations === "function") await config.beforeMigrations(client, config);
     const rows = await readLedger(client, config.schema, config.ledgerTable);
     const report = compareLedger(rows, migrations);
     if (report.unknown.length) throw new Error(`database contains unknown migration(s): ${report.unknown.map(x=>x.version).join(", ")}`);
     if (report.drift.length) throw new Error(`checksum/name mismatch for applied migration(s): ${report.drift.map(x=>x.version).join(", ")}; create a new migration instead of editing history`);
-    if (report.applied.some(row => row.source !== "baseline" && row.source !== "migration")) throw new Error("migration ledger contains invalid source values");
+    if (report.invalidSources.length) throw new Error("migration ledger contains invalid source values");
     const byVersion = new Set(rows.map(row => row.version));
     for (const migration of migrations) {
       if (byVersion.has(migration.version)) continue;
-      const nonTransactional = /^--\s*migrate:non-transactional\s*$/mi.test(migration.sql);
+      const nonTransactional = /^--[ \t]*migrate:non-transactional(?:-index)?[ \t]*$/mi.test(migration.sql);
       if (nonTransactional) {
         if (config.allowNonTransactional !== true) throw new Error(`non-transactional migration ${migration.version} requires explicit allowNonTransactional=true; partial execution cannot be rolled back`);
+        if (typeof config.beforeMigration === "function") await config.beforeMigration(client, migration, config);
         await client.query(migration.sql);
         await client.query(
           `INSERT INTO ${qualifiedName(config.schema, config.ledgerTable)} (version,name,checksum,source) VALUES ($1,$2,$3,'migration')`,
@@ -81,6 +87,7 @@ export async function applyMigrations(pool, options) {
       } else {
         await client.query("BEGIN");
         try {
+          if (typeof config.beforeMigration === "function") await config.beforeMigration(client, migration, config);
           await client.query(migration.sql);
           await client.query(
             `INSERT INTO ${qualifiedName(config.schema, config.ledgerTable)} (version,name,checksum,source) VALUES ($1,$2,$3,'migration')`,
