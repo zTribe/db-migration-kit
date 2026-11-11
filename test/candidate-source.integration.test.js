@@ -16,7 +16,7 @@ test("real PG17: candidate extraction requires a complete audited SQL manifest",
   const origin={repository:"zTribe/zTribe",ref:"a".repeat(40),schemas:[schema]};
   try {
     await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
-    await writeFile(join(dir,file),`CREATE SCHEMA ${schema}; CREATE TABLE ${schema}.messages(id integer);`);
+    await writeFile(join(dir,file),`CREATE SCHEMA IF NOT EXISTS ${schema}; CREATE TABLE ${schema}.messages(id integer);`);
     await assert.rejects(()=>generateCandidateFromMigratedDatabase(pool,config,origin),/does not match the complete migration manifest/);
     await applyMigrations(pool,config);
     const result=await generateCandidateFromMigratedDatabase(pool,config,origin);
