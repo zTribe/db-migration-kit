@@ -1,3 +1,6 @@
+import { auditMigrations } from "./runner.js";
+import { loadManifest } from "./checksum.js";
+import { collectSecurityCatalog } from "./catalog.js";
 import { inventorySecurityObjects } from "./object-model.js";
 
 const ROLE_MATRIX_KIND={schema:"schemas",table:"tables",column:"columns",function:"functions",sequence:"sequences"};
@@ -57,4 +60,36 @@ export function assertApprovedSecurityPolicy(policy) {
   for(const item of policy.objectPolicies ?? [])
     if(item.reviewStatus!=="approved")throw new Error(`security policy object ${item.kind}:${item.key} remains unreviewed`);
   return policy;
+}
+
+/**
+ * Generate a candidate only when the target database ledger has applied the
+ * exact checked-out manifest. This is NOT permission approval, and the
+ * catalog represents its current state (not a proof of historical SQL origin).
+ * The caller must use an isolated test DB; this API is read-only.
+ */
+export async function generateCandidateFromMigratedDatabase(pool, migrationConfig, options) {
+  if (!options?.repository || !options?.ref) {
+    throw new Error("source repository and immutable ref are required");
+  }
+  const manifest = await loadManifest(migrationConfig);
+  const audit = await auditMigrations(pool, migrationConfig);
+  if (audit.pending.length || audit.applied.length !== manifest.length) {
+    throw new Error("candidate extraction refused: database does not match the complete migration manifest");
+  }
+  const snapshot = await collectSecurityCatalog(pool, {
+    schemas: options.schemas,
+    requiredRoles: options.roles ?? [],
+  });
+  const candidate = generateCandidatePolicy(snapshot, {
+    roles:options.roles,
+    provenance:{
+      repository:options.repository,
+      ref:options.ref,
+      migrationFiles:manifest.map(x=>x.file),
+      migrationChecksums:manifest.map(x=>({version:x.version,checksum:x.checksum})),
+    },
+  });
+  candidate.ledgerAudit={complete:true,applied:audit.applied.length};
+  return candidate;
 }
