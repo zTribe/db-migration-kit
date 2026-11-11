@@ -25,7 +25,7 @@ Apply requires explicit confirmation. Local PostgreSQL:
 MIGRATION_DATABASE_URL="postgres://..." node packages/db-migration-kit/bin/db-migrate-kit.js apply --yes --config=...
 ```
 
-A remote target is blocked by default. Only after independently verifying that the connection points to **Dev**, explicitly add `--allow-remote`:
+A remote target is blocked by default. Before using the command below, the Dev database must have an independently provisioned identity marker and the config must include matching `targetIdentity` fields. See [target identity setup](docs/TARGET-IDENTITY.md). The `--allow-remote` flag alone does **not** bypass identity verification:
 ```bash
 MIGRATION_DATABASE_URL="$DEV_DATABASE_URL" node packages/db-migration-kit/bin/db-migrate-kit.js apply --yes --allow-remote --config=...
 ```
