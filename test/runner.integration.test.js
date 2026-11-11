@@ -48,6 +48,9 @@ test("real PostgreSQL: ordered apply, transaction rollback, checksum drift, read
     const ledger = await pool.query(`SELECT count(*)::int AS count FROM ${schema}.schema_migrations`);
     assert.equal(ledger.rows[0].count, 2);
 
+    // Restore the original migration before testing transactional rollback.
+    // Otherwise checksum drift short-circuits apply and never executes the failing SQL.
+    await writeFile(join(dir, files[0]), `CREATE TABLE ${schema}.sample (id integer primary key); INSERT INTO ${schema}.sample VALUES (1);`);
     const failingFile = "003_failing.sql";
     await writeFile(join(dir, failingFile), `CREATE TABLE ${schema}.must_rollback(id integer); SELECT * FROM ${schema}.table_that_does_not_exist;`);
     const failureOptions = { ...options, files: [...files, failingFile] };
