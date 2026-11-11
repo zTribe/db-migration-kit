@@ -80,7 +80,7 @@ export async function applyMigrations(pool, options) {
     await client.query("BEGIN");
     try {
       await ensureLedger(client, config.schema, config.ledgerTable);
-      if(config.ledgerSecurity) await hardenMigrationLedger(client, {...config, ...config.ledgerSecurity});
+      if(config.ledgerSecurity) await hardenMigrationLedger(client, {schema:config.schema, ledgerTable:config.ledgerTable, auditRole:config.ledgerSecurity.auditRole, clientRoles:config.ledgerSecurity.clientRoles});
       await client.query("COMMIT");
     } catch(error) {
       await client.query("ROLLBACK").catch(()=>undefined);
