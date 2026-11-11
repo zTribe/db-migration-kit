@@ -79,12 +79,19 @@ export async function inspectRuntimeSecurity(pool, rules) {
     if (requiredForceRls.has(key) && !table.relforcerowsecurity) failures.push(`${key}: FORCE RLS is disabled`);
   }
   const allowedOwners = new Set(rules.allowedDefinerOwners ?? []);
+  for (const fn of Object.keys(rules.expectedDefinerSearchPaths ?? {})) {
+    if (!existingFunctions.has(fn)) failures.push(`${fn}: expected SECURITY DEFINER function is missing`);
+  }
   for (const fn of snapshot.functions) {
     if (!fn.security_definer) continue;
     const label = `${fn.schema_name}.${fn.proname}(${fn.identity_args})`;
     if (!allowedOwners.has(fn.owner_name)) failures.push(`${label}: unexpected SECURITY DEFINER owner ${fn.owner_name}`);
     const settings = fn.proconfig ?? [];
     const searchPath = settings.find(value => value.startsWith("search_path="));
+    const expectedPath = rules.expectedDefinerSearchPaths?.[label];
+    if (expectedPath !== undefined && searchPath !== `search_path=${expectedPath}`) {
+      failures.push(`${label}: expected exact search_path ${expectedPath}; actual ${searchPath ?? "unset"}`);
+    }
     if (rules.requireFixedSearchPath !== false && !searchPath) failures.push(`${label}: SECURITY DEFINER has no fixed search_path`);
     if (searchPath && /(^|[, ])public([, ]|$)|\$user/i.test(searchPath)) failures.push(`${label}: unsafe search_path ${searchPath}`);
     if (fn.public_execute) failures.push(`${label}: PUBLIC can EXECUTE`);
