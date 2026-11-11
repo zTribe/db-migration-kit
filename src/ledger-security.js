@@ -20,6 +20,15 @@ export async function hardenMigrationLedger(client, options) {
   }
   await client.query(`ALTER TABLE ${ledger} ENABLE ROW LEVEL SECURITY`);
   await client.query(`ALTER TABLE ${ledger} FORCE ROW LEVEL SECURITY`);
+  // FORCE RLS also applies to the table owner. Allow the trusted migration
+  // identity to continue recording checksums; no access for app roles.
+  const migrator=(await client.query("SELECT current_user AS username")).rows[0].username;
+  if(names.includes(migrator) || auditRole===migrator)throw new Error("untrusted migrator role");
+  const writePolicy="db_migration_kit_migrator";
+  const existsWriter=await client.query("SELECT 1 FROM pg_catalog.pg_policy WHERE polrelid=$1::regclass AND polname=$2",[ledger,writePolicy]);
+  if(!existsWriter.rowCount) await client.query(
+    `CREATE POLICY ${quoteIdentifier(writePolicy)} ON ${ledger} FOR ALL TO ${quoteIdentifier(migrator)} USING (true) WITH CHECK (true)`,
+  );
   // Only this one table and one read-only audit role; no default privileges.
   if(auditRole){
     if(!existing.includes(auditRole))throw new Error(`required ledger audit role ${auditRole} is missing`);
