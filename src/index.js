@@ -11,4 +11,4 @@ export { generateCandidatePolicy, generateCandidateFromMigratedDatabase, assertA
 export { hardenMigrationLedger } from "./ledger-security.js";
 export { readSchemaCatalog, readSchemaCatalogOnClient, normalizeSchemaCatalog, compareSchemaCatalog, auditSchemaCatalog } from "./schema-audit.js";
 export { autoBaselineVerifiedCatalog, omitMigrationLedger } from "./auto-baseline.js";
-export { inspectConcurrentIndex, dropInvalidIndexForRetry, recoverInvalidConcurrentIndex } from "./index-recovery.js";
+export { inspectConcurrentIndex, recoverInvalidConcurrentIndex } from "./index-recovery.js";
