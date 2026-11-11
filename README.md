@@ -42,6 +42,39 @@ Do not run local tests or CLI apply against Production. `status` and `audit` are
 - Live catalog inspection for schema/table RLS, FORCE RLS, SECURITY DEFINER ownership, fixed `search_path`, PUBLIC/client EXECUTE, effective table DML privileges and schema CREATE privileges.
 - Project-specific manifest, role allowlists, schema names and RLS expectations remain in each service config; the package does not invent grants or policies.
 
-## Current hosting status
+## Shared service adapter API (in development)
 
-The package currently lives under `packages/db-migration-kit` in the private `zTribe/zTribe-indexer` repository and is consumed by Indexer as a workspace package. It is **not yet published to npm or hosted in a standalone public repository**, and Chat has not yet been switched to consume it. Cross-repository reuse becomes straightforward once the package is published or moved to a repository both projects can access from local development, CI and Railway.
+The shared Runner owns ordered migration execution, checksum drift detection, advisory locks, transaction boundaries, ledger writes, and audit reports. Both Chat and Indexer supply project-specific configuration and safety hooks.
+
+```js
+import { applyMigrations, baselineMigrations, auditMigrations, inspectRuntimeSecurity } from "@ztribe/db-migration-kit";
+
+const config = {
+  directory: "./sql", // Indexer: ./sql; Chat: ./supabase/migrations
+  files: ["001_first.sql", "002_second.sql"],
+  schema: "chain", // Chat: app
+  ledgerTable: "schema_migrations",
+  lockName: "unique-lock-per-service",
+  verifyTarget: async (client) => {
+    // A production-safe adapter MUST independently verify the database identity
+    // using DB-side identity evidence, not the shared Supabase pooler hostname.
+  },
+  beforeMigrations: async (client) => {
+    // Optional project legacy baseline hook (requires separate catalog proof).
+  },
+  beforeMigration: async (client, migration) => {
+    // Destructive migration guard, owner checks, invalid-index repair, etc.
+  },
+  allowNonTransactional: false,
+};
+```
+
+**Verified baseline:** `baselineMigrations(pool, {...config, baselineThrough: "001_first", verifyBaseline: async client => /* compare expected vs actual catalog */ true })` requires explicit, successful catalog evidence and records SHA256 checksums without applying SQL. Never use an unconditional `true` in real adapters.
+
+**Indexer compatibility requirements:** restore its `beforeMigration` destructive-reset and invalid-concurrent-index hooks; explicitly allow reviewed non-transactional index migrations. The historic Indexer `baseline-existing-schema` marker requires a legacy-specific policy before switching the live service. Do not silently rewrite historical ledger rows.
+
+**Chat compatibility requirements:** retain its catalog-verified auto-baseline through the existing approved version, destructive guards, TLS certificate handling and project-ref checks; its legacy `status` exit code for pending migrations and current CLI flags must be mapped in the adapter.
+
+## Adoption status
+
+The standalone repo has real PostgreSQL 17 tests for the generic Runner and simulated Chat/Indexer adapter workflows. **Neither live Chat nor live Indexer repo has yet switched to consume this standalone package.** CI success here must not be interpreted as full consumer compatibility or production readiness. Never run against Production until full cross-repo tests and a separately authorized deployment.
