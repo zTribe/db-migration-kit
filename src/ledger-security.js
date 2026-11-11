@@ -39,5 +39,26 @@ export async function hardenMigrationLedger(client, options) {
     if(!existingPolicy.rowCount)
       await client.query(`CREATE POLICY ${quoteIdentifier(policy)} ON ${ledger} FOR SELECT TO ${quoteIdentifier(auditRole)} USING (true)`);
   }
+  // Direct REVOKE does not defeat inherited privileges. Verify the effective
+  // permissions after all changes and fail the surrounding DDL transaction.
+  const blocked=["SELECT","INSERT","UPDATE","DELETE","TRUNCATE","REFERENCES","TRIGGER"];
+  for(const role of names.filter(x=>existing.includes(x))){
+    for(const privilege of blocked){
+      const {rows}=await client.query(
+        "SELECT pg_catalog.has_table_privilege($1,$2,$3) AS granted",
+        [role,ledger,privilege],
+      );
+      if(rows[0].granted)throw new Error(`migration ledger ACL failed: ${role} inherits ${privilege}`);
+    }
+  }
+  if(auditRole){
+    for(const privilege of blocked.filter(x=>x!=="SELECT")){
+      const {rows}=await client.query(
+        "SELECT pg_catalog.has_table_privilege($1,$2,$3) AS granted",
+        [auditRole,ledger,privilege],
+      );
+      if(rows[0].granted)throw new Error(`migration audit role ${auditRole} inherits ${privilege}`);
+    }
+  }
   return {hardened:true,ledger,auditRole};
 }
