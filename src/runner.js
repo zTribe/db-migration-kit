@@ -111,6 +111,55 @@ export async function applyMigrations(pool, options) {
   }
 }
 
+/**
+ * One baseline mechanism for service adapters. The adapter must independently
+ * prove the live catalog corresponds to the declared baseline target.
+ * No SQL migration is executed during baseline registration.
+ */
+export async function baselineMigrations(pool, options) {
+  const config = { ...DEFAULTS, ...options };
+  if (typeof config.verifyBaseline !== "function") throw new Error("baseline requires verifyBaseline live catalog proof");
+  if (typeof config.baselineThrough !== "string" || !config.baselineThrough) throw new Error("baselineThrough is required");
+  const migrations = await loadManifest(config);
+  const lastIndex = migrations.findIndex(item => item.version === config.baselineThrough);
+  if (lastIndex < 0) throw new Error("baselineThrough is not in the migration manifest");
+  const client = await pool.connect();
+  let locked = false;
+  try {
+    await client.query("SELECT pg_catalog.pg_advisory_lock(pg_catalog.hashtextextended($1,0))", [config.lockName]);
+    locked = true;
+    if (typeof config.verifyTarget === "function") await config.verifyTarget(client, config);
+    const previous = compareLedger(await readLedger(client, config.schema, config.ledgerTable), migrations);
+    if (!previous.ok) throw new Error("baseline refused due to unknown migrations or checksum drift");
+    const expectedPrefix = new Set(migrations.slice(0, lastIndex + 1).map(x => x.version));
+    if (previous.applied.some(x => !expectedPrefix.has(x.version))) throw new Error("baseline refused: migrations already recorded after baselineThrough");
+    const verified = await config.verifyBaseline(client, { through: config.baselineThrough, migrations, applied: previous.applied });
+    if (verified !== true) throw new Error("baseline refused: live catalog does not match declared baseline");
+    await client.query("BEGIN");
+    try {
+      await ensureLedger(client, config.schema, config.ledgerTable);
+      const already = new Set(previous.applied.map(x => x.version));
+      const recorded = [];
+      for (const migration of migrations.slice(0, lastIndex + 1)) {
+        if (already.has(migration.version)) continue;
+        await client.query(
+          `INSERT INTO ${qualifiedName(config.schema, config.ledgerTable)} (version,name,checksum,source) VALUES ($1,$2,$3,'baseline')`,
+          [migration.version, migration.name, migration.checksum],
+        );
+        recorded.push(migration.version);
+      }
+      await client.query("COMMIT");
+      return { recorded, through: config.baselineThrough };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    }
+  } finally {
+    if (locked) await client.query("SELECT pg_catalog.pg_advisory_unlock(pg_catalog.hashtextextended($1,0))", [config.lockName]).catch(() => undefined);
+    client.release();
+  }
+}
+
 export async function auditMigrations(pool, options) {
   const config = { ...DEFAULTS, ...options };
   const migrations = await loadManifest(config);
