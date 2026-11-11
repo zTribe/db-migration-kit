@@ -43,6 +43,19 @@ test("PG17: hardened migration ledger retains approved migrator, denies clients 
   assert.deepEqual(policies.rows.map(x=>x.polname),["db_migration_kit_audit_select","db_migration_kit_migrator"]);
   assert.equal((await inspectMigrations(pool,config)).applied.length,2);
   assert.deepEqual((await applyMigrations(pool,config)).applied,[]);
+  // Revoking direct grants must not hide inherited SELECT via another role.
+  await pool.query("CREATE ROLE kit_ledger_parent_it NOLOGIN");
+  try {
+    await pool.query(`GRANT SELECT ON ${schema}.schema_migrations TO kit_ledger_parent_it`);
+    await pool.query(`GRANT kit_ledger_parent_it TO ${untrusted} WITH INHERIT TRUE`);
+    await assert.rejects(()=>applyMigrations(pool,config),/inherits SELECT/);
+    const after=await pool.query(`SELECT COUNT(*)::int AS n FROM ${schema}.schema_migrations`);
+    assert.equal(after.rows[0].n,2,"a refused ACL audit must not add migration records");
+  } finally {
+    await pool.query(`REVOKE kit_ledger_parent_it FROM ${untrusted}`).catch(()=>{});
+    await pool.query(`REVOKE SELECT ON ${schema}.schema_migrations FROM kit_ledger_parent_it`).catch(()=>{});
+    await pool.query("DROP ROLE IF EXISTS kit_ledger_parent_it").catch(()=>{});
+  }
  }finally{
   await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(()=>{});
   await pool.query(`DROP ROLE IF EXISTS ${audit}`).catch(()=>{});
