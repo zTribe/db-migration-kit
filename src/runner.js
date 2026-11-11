@@ -63,7 +63,9 @@ export async function applyMigrations(pool, options) {
     await client.query("SELECT pg_catalog.pg_advisory_lock(pg_catalog.hashtextextended($1,0))", [config.lockName]);
     locked = true;
     const preflight = compareLedger(await readLedger(client, config.schema, config.ledgerTable), migrations);
-    if (!preflight.ok) throw new Error("existing migration ledger failed preflight; refusing any migration writes");
+    if (preflight.unknown.length) throw new Error(`unknown applied migration(s): ${preflight.unknown.map(row => row.version).join(", ")}; refusing writes`);
+    if (preflight.drift.length) throw new Error(`checksum/name mismatch for applied migration(s): ${preflight.drift.map(row => row.version).join(", ")}; refusing writes`);
+    if (preflight.invalidSources.length) throw new Error("invalid ledger source; refusing writes");
     if (typeof config.verifyTarget === "function") await config.verifyTarget(client, config);
     await ensureLedger(client, config.schema, config.ledgerTable);
     if (typeof config.beforeMigrations === "function") await config.beforeMigrations(client, config);
