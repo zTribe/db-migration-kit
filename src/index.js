@@ -8,3 +8,7 @@ export { buildSecurityAudit } from "./audit-report.js";
 export { inventorySecurityObjects, OBJECT_KINDS, OBJECT_MODEL_VERSION } from "./object-model.js";
 export { evaluateObjectPolicies } from "./object-policy.js";
 export { generateCandidatePolicy, generateCandidateFromMigratedDatabase, assertApprovedSecurityPolicy } from "./candidate.js";
+export { hardenMigrationLedger } from "./ledger-security.js";
+export { readSchemaCatalog, readSchemaCatalogOnClient, normalizeSchemaCatalog, compareSchemaCatalog, auditSchemaCatalog } from "./schema-audit.js";
+export { autoBaselineVerifiedCatalog, omitMigrationLedger } from "./auto-baseline.js";
+export { inspectConcurrentIndex, dropInvalidIndexForRetry } from "./index-recovery.js";
