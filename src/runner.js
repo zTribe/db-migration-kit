@@ -66,11 +66,13 @@ export async function applyMigrations(pool, options) {
     const report = compareLedger(rows, migrations);
     if (report.unknown.length) throw new Error(`database contains unknown migration(s): ${report.unknown.map(x=>x.version).join(", ")}`);
     if (report.drift.length) throw new Error(`checksum/name mismatch for applied migration(s): ${report.drift.map(x=>x.version).join(", ")}; create a new migration instead of editing history`);
+    if (report.applied.some(row => row.source !== "baseline" && row.source !== "migration")) throw new Error("migration ledger contains invalid source values");
     const byVersion = new Set(rows.map(row => row.version));
     for (const migration of migrations) {
       if (byVersion.has(migration.version)) continue;
       const nonTransactional = /^--\s*migrate:non-transactional\s*$/mi.test(migration.sql);
       if (nonTransactional) {
+        if (config.allowNonTransactional !== true) throw new Error(`non-transactional migration ${migration.version} requires explicit allowNonTransactional=true; partial execution cannot be rolled back`);
         await client.query(migration.sql);
         await client.query(
           `INSERT INTO ${qualifiedName(config.schema, config.ledgerTable)} (version,name,checksum,source) VALUES ($1,$2,$3,'migration')`,
