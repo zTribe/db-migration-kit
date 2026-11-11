@@ -1,5 +1,5 @@
 export type MigrationEntry = string | { file: string; version: string };
-export type MigrationConfig = { directory: string; files: MigrationEntry[]; schema?: string; ledgerTable?: string; lockName?: string; beforeMigrations?: (client: any, config: any) => Promise<void>; verifyTarget?: (client: any, config: any) => Promise<void>; verifyBaseline?: (client: any, input: any) => Promise<boolean>; baselineThrough?: string; allowNonTransactional?: boolean; beforeMigration?: (client: any, migration: {version:string;name:string;file:string;sql:string;checksum:string}, config: any) => Promise<void> };
+export type MigrationConfig = { directory: string; files: MigrationEntry[]; schema?: string; ledgerTable?: string; lockName?: string; beforeMigrations?: (client: any, config: any) => Promise<void>; verifyTarget?: (client: any, config: any) => Promise<void>; verifyBaseline?: (client: any, input: any) => Promise<boolean>; baselineThrough?: string; allowNonTransactional?: boolean; ledgerSecurity?: { auditRole?: string; clientRoles?: string[] }; autoBaseline?: { through: string; schemas: string[]; expectedCatalog: any }; beforeMigration?: (client: any, migration: {version:string;name:string;file:string;sql:string;checksum:string}, config: any) => Promise<void> };
 export function checksumText(sql: string): string;
 export function loadManifest(config: MigrationConfig): Promise<Array<{version:string;name:string;file:string;sql:string;checksum:string}>>;
 export function inspectMigrations(pool: any, config: MigrationConfig): Promise<any>;
@@ -12,3 +12,20 @@ export function verifyDatabaseTarget(client: any, expected: { schema: string; ta
 export function collectSecurityCatalog(pool: any, rules: any): Promise<any>;
 export function evaluateSecurityPolicy(snapshot: any, rules: any): string[];
 export function buildSecurityAudit(snapshot: any, rules: any, failures: string[]): {ok:boolean;failures:string[];diagnostics:Array<{code:string;id:string;severity:string;message:string}>;snapshot:any;summary:any};
+
+export function hardenMigrationLedger(client:any, options:{schema?:string;ledgerTable?:string;auditRole?:string;clientRoles?:string[]}):Promise<any>;
+export function readSchemaCatalog(pool:any,schemas:string[],options?:{statementTimeoutMs?:number}):Promise<any>;
+export function readSchemaCatalogOnClient(client:any,schemas:string[]):Promise<any>;
+export function normalizeSchemaCatalog(value:any):any;
+export function compareSchemaCatalog(expected:any,actual:any):{ok:boolean;differences:any[]};
+export function auditSchemaCatalog(pool:any,options:{schemas:string[];expected:any}):Promise<any>;
+export function autoBaselineVerifiedCatalog(client:any,config:MigrationConfig,migrations:any[]):Promise<string[]>;
+export function omitMigrationLedger(snapshot:any,schema:string,ledgerTable:string):any;
+export function inspectConcurrentIndex(client:any,target:{schema:string;index:string}):Promise<any>;
+export function dropInvalidIndexForRetry(client:any,target:{schema:string;index:string;table:string;confirm:boolean}):Promise<any>;
+export function recoverInvalidConcurrentIndex(pool:any,config:MigrationConfig,target:{schema:string;index:string;table:string;confirm:boolean}):Promise<any>;
+export function inventorySecurityObjects(snapshot:any):any;
+export function evaluateObjectPolicies(snapshot:any,rules:any):any[];
+export function generateCandidatePolicy(snapshot:any,options:any):any;
+export function generateCandidateFromMigratedDatabase(pool:any,migrationConfig:MigrationConfig,options:any):Promise<any>;
+export function assertApprovedSecurityPolicy(policy:any):any;
