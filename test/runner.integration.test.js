@@ -137,6 +137,34 @@ test("real PostgreSQL catalog: RLS, SECURITY DEFINER owner, search_path and effe
       allowedSchemaPrivileges: { kit_anon: ["USAGE"] },
     });
     assert.deepEqual(requiredOk.failures, []);
+    const inventory = await inspectRuntimeSecurity(pool, {
+      schemas: [schema],
+      requiredTables: [`${schema}.private_rows`, `${schema}.missing_table`],
+      requiredFunctions: [`${schema}.safe_fn()`, `${schema}.missing_fn()`],
+      expectedTableOwners: { [`${schema}.private_rows`]: "kit_runtime_owner" },
+      expectedFunctionOwners: { [`${schema}.safe_fn()`]: "kit_anon" },
+      requiredRoles: ["kit_anon", "kit_role_missing_it"],
+      forbidBypassRlsRoles: ["kit_anon"],
+      forbidSuperuserRoles: ["kit_anon"],
+      allowedDefinerOwners: ["kit_runtime_owner"],
+    });
+    assert.ok(inventory.failures.some(x => x.includes("missing_table") && x.includes("missing")));
+    assert.ok(inventory.failures.some(x => x.includes("missing_fn") && x.includes("missing")));
+    assert.ok(inventory.failures.some(x => x.includes("kit_role_missing_it") && x.includes("missing")));
+    assert.ok(inventory.failures.some(x => x.includes("private_rows: expected owner")));
+    assert.ok(inventory.failures.some(x => x.includes("safe_fn(): expected owner")));
+    const validInventory = await inspectRuntimeSecurity(pool, {
+      schemas: [schema],
+      requiredTables: [`${schema}.private_rows`],
+      requiredFunctions: [`${schema}.safe_fn()`],
+      expectedFunctionOwners: { [`${schema}.safe_fn()`]: "kit_runtime_owner" },
+      requiredRoles: ["kit_anon"],
+      forbidBypassRlsRoles: ["kit_anon"],
+      forbidSuperuserRoles: ["kit_anon"],
+      allowedDefinerOwners: ["kit_runtime_owner"],
+    });
+    assert.deepEqual(validInventory.failures, []);
+
 
   } finally {
     await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => undefined);
