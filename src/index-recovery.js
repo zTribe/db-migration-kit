@@ -1,4 +1,5 @@
 import {qualifiedName} from "./identifiers.js";
+import {withMigrationLock} from "./lock.js";
 
 /** Introspection only; never modifies an index. */
 export async function inspectConcurrentIndex(client,{schema,index}){
@@ -30,4 +31,19 @@ export async function dropInvalidIndexForRetry(client,{schema,index,table,confir
   if(found.valid)throw new Error("refusing to drop a valid index");
   await client.query(`DROP INDEX CONCURRENTLY ${qualifiedName(schema,index)}`);
   return {dropped:true,index:`${schema}.${index}`};
+}
+
+/**
+ * Run controlled recovery under the exact same advisory lock as migrations.
+ * Remote callers should provide verifyTarget; the code never runs migrations.
+ */
+export async function recoverInvalidConcurrentIndex(pool,config,target) {
+  if(typeof config?.lockName!=="string" || !config.lockName)
+    throw new Error("migration lockName is required for recovery");
+  if(typeof config.verifyTarget!=="function")
+    throw new Error("invalid index recovery requires verified database identity");
+  return withMigrationLock(pool,config,async client=>{
+    await config.verifyTarget(client,config);
+    return dropInvalidIndexForRetry(client,target);
+  });
 }
