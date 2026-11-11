@@ -8,3 +8,4 @@ export function baselineMigrations(pool: any, config: MigrationConfig): Promise<
 export function auditMigrations(pool: any, config: MigrationConfig): Promise<any>;
 export function inspectRuntimeSecurity(pool: any, rules: any): Promise<{ok:boolean;failures:string[];snapshot:any}>;
 export const SECURITY_CATALOG_SQL: string;
+export function verifyDatabaseTarget(client: any, expected: { schema: string; table: string; projectRef: string; environment: "dev" | "production" | "test" }): Promise<{verified:boolean;environment:string}>;
