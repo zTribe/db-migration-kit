@@ -6,7 +6,7 @@ import {join} from "node:path";
 import {tmpdir} from "node:os";
 import {
  applyMigrations, inspectMigrations, readSchemaCatalog, compareSchemaCatalog,
- inspectConcurrentIndex, dropInvalidIndexForRetry,
+ inspectConcurrentIndex, dropInvalidIndexForRetry, recoverInvalidConcurrentIndex,
 } from "../src/index.js";
 const url=process.env.PG_TEST_URL;
 
@@ -93,8 +93,8 @@ test("PG17: strict auto baseline records verified history, fails closed on catal
   await pool.query(`CREATE SCHEMA ${schema}`);
   await pool.query(`CREATE TABLE ${schema}.messages(id integer, corrupt text)`);
   await assert.rejects(()=>applyMigrations(pool,config),/automatic baseline refused/);
-  const count=await pool.query(`SELECT count(*)::int AS n FROM ${schema}.schema_migrations`);
-  assert.equal(count.rows[0].n,0);
+  const ledger=await pool.query("SELECT pg_catalog.to_regclass($1) AS target",[`${schema}.schema_migrations`]);
+  assert.equal(ledger.rows[0].target,null,"mismatched legacy catalog must be rejected before ledger DDL");
  }finally{
   await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(()=>{});
   await rm(dir,{recursive:true,force:true});await pool.end();
@@ -114,7 +114,15 @@ test("PG17: invalid index recovery requires explicit confirmation and never drop
   assert.equal(invalid?.valid,false);
   await assert.rejects(()=>dropInvalidIndexForRetry(pool,{schema,index:"items_unique_it",table:"items"}),/confirm=true/);
   await assert.rejects(()=>dropInvalidIndexForRetry(pool,{schema,index:"items_unique_it",table:"other",confirm:true}),/unexpected table/);
-  assert.equal((await dropInvalidIndexForRetry(pool,{schema,index:"items_unique_it",table:"items",confirm:true})).dropped,true);
+  await assert.rejects(()=>recoverInvalidConcurrentIndex(pool,{lockName:"kit-index-retry-it"},{schema,index:"items_unique_it",table:"items",confirm:true}),/verified database identity/);
+  const recovered=await recoverInvalidConcurrentIndex(pool,{
+    lockName:"kit-index-retry-it",
+    verifyTarget:async client=>{
+      const result=await client.query("SELECT current_database() IS NOT NULL AS ok");
+      assert.equal(result.rows[0].ok,true);
+    },
+  },{schema,index:"items_unique_it",table:"items",confirm:true});
+  assert.equal(recovered.dropped,true);
   assert.equal(await inspectConcurrentIndex(pool,{schema,index:"items_unique_it"}),null);
   await pool.query(`DELETE FROM ${schema}.items WHERE ctid IN (SELECT min(ctid) FROM ${schema}.items)`);
   await pool.query(`CREATE UNIQUE INDEX CONCURRENTLY items_unique_it ON ${schema}.items(id)`);
