@@ -2,6 +2,7 @@ import { loadManifest } from "./checksum.js";
 import { qualifiedName, quoteIdentifier } from "./identifiers.js";
 import { withMigrationLock } from "./lock.js";
 import { hardenMigrationLedger } from "./ledger-security.js";
+import { autoBaselineVerifiedCatalog } from "./auto-baseline.js";
 
 const DEFAULTS = {
   schema: "public",
@@ -84,6 +85,7 @@ export async function applyMigrations(pool, options) {
       await client.query("ROLLBACK").catch(()=>undefined);
       throw error;
     }
+    if(config.autoBaseline) await autoBaselineVerifiedCatalog(client, config, migrations);
     if (typeof config.beforeMigrations === "function") await config.beforeMigrations(client, config);
     const rows = await readLedger(client, config.schema, config.ledgerTable);
     const report = compareLedger(rows, migrations, config);
