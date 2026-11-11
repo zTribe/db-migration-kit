@@ -1,0 +1,32 @@
+name: Publish migration kit to GitHub Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    if: github.repository == 'zTribe/db-migration-kit'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure git tag matches package version
+        shell: bash
+        run: |
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          test "$GITHUB_REF_NAME" = "v$PACKAGE_VERSION" || { echo "Tag/version mismatch"; exit 1; }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@ztribe'
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - run: npm publish --registry=https://npm.pkg.github.com
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
