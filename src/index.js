@@ -7,4 +7,4 @@ export { evaluateSecurityPolicy } from "./policy.js";
 export { buildSecurityAudit } from "./audit-report.js";
 export { inventorySecurityObjects, OBJECT_KINDS, OBJECT_MODEL_VERSION } from "./object-model.js";
 export { evaluateObjectPolicies } from "./object-policy.js";
-export { generateCandidatePolicy, assertApprovedSecurityPolicy } from "./candidate.js";
+export { generateCandidatePolicy, generateCandidateFromMigratedDatabase, assertApprovedSecurityPolicy } from "./candidate.js";
