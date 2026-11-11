@@ -95,6 +95,49 @@ test("real PostgreSQL catalog: RLS, SECURITY DEFINER owner, search_path and effe
     assert.equal(report.ok, false);
     assert.ok(report.failures.some(x => x.includes("INSERT") || x.includes("SELECT"))); // DML privilege is caught from live catalogs.
     assert.ok(report.failures.some(x => x.includes("kit_anon has CREATE") ) === false);
+    const selectDenied = await inspectRuntimeSecurity(pool, {
+      schemas: [schema],
+      requireRlsOn: [`${schema}.private_rows`],
+      allowedDefinerOwners: ["kit_runtime_owner"],
+      deniedExecuteRoles: ["kit_anon"],
+      deniedTableSelectRoles: ["kit_anon"],
+      deniedSchemaUsageRoles: ["kit_anon"],
+      deniedSchemaCreateRoles: ["kit_anon"],
+    });
+    assert.ok(selectDenied.failures.some(x => x.includes("kit_anon has effective SELECT")));
+    assert.ok(selectDenied.failures.some(x => x.includes("kit_anon has USAGE")));
+    await pool.query(`REVOKE SELECT, INSERT ON ${schema}.private_rows FROM kit_anon`);
+    await pool.query(`REVOKE USAGE ON SCHEMA ${schema} FROM kit_anon`);
+    const clean = await inspectRuntimeSecurity(pool, {
+      schemas: [schema],
+      requireRlsOn: [`${schema}.private_rows`],
+      allowedDefinerOwners: ["kit_runtime_owner"],
+      deniedExecuteRoles: ["kit_anon"],
+      deniedTableSelectRoles: ["kit_anon"],
+      deniedTableDmlRoles: ["kit_anon"],
+      deniedSchemaUsageRoles: ["kit_anon"],
+      deniedSchemaCreateRoles: ["kit_anon"],
+    });
+    assert.deepEqual(clean.failures, [], `unexpected live catalog failures: ${clean.failures.join("; ")}`);
+    await pool.query(`GRANT SELECT ON ${schema}.private_rows TO kit_anon`);
+    const required = await inspectRuntimeSecurity(pool, {
+      schemas: [schema],
+      requireRlsOn: [`${schema}.private_rows`],
+      allowedDefinerOwners: ["kit_runtime_owner"],
+      allowedTablePrivileges: { kit_anon: ["SELECT"] },
+      allowedSchemaPrivileges: { kit_anon: ["USAGE"] },
+    });
+    assert.ok(required.failures.some(x => x.includes("kit_anon lacks USAGE")));
+    await pool.query(`GRANT USAGE ON SCHEMA ${schema} TO kit_anon`);
+    const requiredOk = await inspectRuntimeSecurity(pool, {
+      schemas: [schema],
+      requireRlsOn: [`${schema}.private_rows`],
+      allowedDefinerOwners: ["kit_runtime_owner"],
+      allowedTablePrivileges: { kit_anon: ["SELECT"] },
+      allowedSchemaPrivileges: { kit_anon: ["USAGE"] },
+    });
+    assert.deepEqual(requiredOk.failures, []);
+
   } finally {
     await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => undefined);
     await pool.query("DROP ROLE IF EXISTS kit_anon").catch(() => undefined);
