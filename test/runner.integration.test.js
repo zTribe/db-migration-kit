@@ -164,6 +164,19 @@ test("real PostgreSQL catalog: RLS, SECURITY DEFINER owner, search_path and effe
       allowedDefinerOwners: ["kit_runtime_owner"],
     });
     assert.deepEqual(validInventory.failures, []);
+    const exactPathOk = await inspectRuntimeSecurity(pool, {
+      schemas: [schema],
+      allowedDefinerOwners: ["kit_runtime_owner"],
+      expectedDefinerSearchPaths: { [`${schema}.safe_fn()`]: "pg_catalog, pg_temp" },
+    });
+    assert.deepEqual(exactPathOk.failures, []);
+    const exactPathBad = await inspectRuntimeSecurity(pool, {
+      schemas: [schema],
+      allowedDefinerOwners: ["kit_runtime_owner"],
+      expectedDefinerSearchPaths: { [`${schema}.safe_fn()`]: "pg_catalog, other_schema, pg_temp" },
+    });
+    assert.ok(exactPathBad.failures.some(x => x.includes("expected exact search_path")));
+
 
 
   } finally {
