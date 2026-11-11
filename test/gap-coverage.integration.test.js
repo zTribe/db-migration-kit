@@ -6,7 +6,7 @@ import {join} from "node:path";
 import {tmpdir} from "node:os";
 import {
  applyMigrations, inspectMigrations, readSchemaCatalog, compareSchemaCatalog,
- inspectConcurrentIndex, dropInvalidIndexForRetry, recoverInvalidConcurrentIndex,
+ inspectConcurrentIndex, recoverInvalidConcurrentIndex,
 } from "../src/index.js";
 const url=process.env.PG_TEST_URL;
 
@@ -125,8 +125,8 @@ test("PG17: invalid index recovery requires explicit confirmation and never drop
   await assert.rejects(()=>pool.query(`CREATE UNIQUE INDEX CONCURRENTLY items_unique_it ON ${schema}.items(id)`));
   const invalid=await inspectConcurrentIndex(pool,{schema,index:"items_unique_it"});
   assert.equal(invalid?.valid,false);
-  await assert.rejects(()=>dropInvalidIndexForRetry(pool,{schema,index:"items_unique_it",table:"items"}),/confirm=true/);
-  await assert.rejects(()=>dropInvalidIndexForRetry(pool,{schema,index:"items_unique_it",table:"other",confirm:true}),/unexpected table/);
+  await assert.rejects(()=>recoverInvalidConcurrentIndex(pool,{lockName:"kit-index-retry-it",verifyTarget:async()=>{}},{schema,index:"items_unique_it",table:"items"}),/confirm=true/);
+  await assert.rejects(()=>recoverInvalidConcurrentIndex(pool,{lockName:"kit-index-retry-it",verifyTarget:async()=>{}},{schema,index:"items_unique_it",table:"other",confirm:true}),/unexpected table/);
   await assert.rejects(()=>recoverInvalidConcurrentIndex(pool,{lockName:"kit-index-retry-it"},{schema,index:"items_unique_it",table:"items",confirm:true}),/verified database identity/);
   const recovered=await recoverInvalidConcurrentIndex(pool,{
     lockName:"kit-index-retry-it",
@@ -139,7 +139,7 @@ test("PG17: invalid index recovery requires explicit confirmation and never drop
   assert.equal(await inspectConcurrentIndex(pool,{schema,index:"items_unique_it"}),null);
   await pool.query(`DELETE FROM ${schema}.items WHERE ctid IN (SELECT min(ctid) FROM ${schema}.items)`);
   await pool.query(`CREATE UNIQUE INDEX CONCURRENTLY items_unique_it ON ${schema}.items(id)`);
-  await assert.rejects(()=>dropInvalidIndexForRetry(pool,{schema,index:"items_unique_it",table:"items",confirm:true}),/valid index/);
+  await assert.rejects(()=>recoverInvalidConcurrentIndex(pool,{lockName:"kit-index-retry-it",verifyTarget:async()=>{}},{schema,index:"items_unique_it",table:"items",confirm:true}),/valid index/);
  }finally{
   await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(()=>{});
   await pool.end();
