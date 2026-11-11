@@ -2,7 +2,7 @@ import { loadManifest } from "./checksum.js";
 import { qualifiedName, quoteIdentifier } from "./identifiers.js";
 import { withMigrationLock } from "./lock.js";
 import { hardenMigrationLedger } from "./ledger-security.js";
-import { autoBaselineVerifiedCatalog } from "./auto-baseline.js";
+import { autoBaselineVerifiedCatalog, preflightAutoBaselineCatalog } from "./auto-baseline.js";
 
 const DEFAULTS = {
   schema: "public",
@@ -74,6 +74,7 @@ export async function applyMigrations(pool, options) {
     if (preflight.drift.length) throw new Error(`checksum/name mismatch for applied migration(s): ${preflight.drift.map(row => row.version).join(", ")}; refusing writes`);
     if (preflight.invalidSources.length) throw new Error("invalid ledger source; refusing writes");
     if (typeof config.verifyTarget === "function") await config.verifyTarget(client, config);
+    if(config.autoBaseline) await preflightAutoBaselineCatalog(client, config);
     // Make ledger creation and optional ACL hardening atomic: no exposure
     // window for a newly created ledger.
     await client.query("BEGIN");
