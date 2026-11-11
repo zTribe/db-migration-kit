@@ -1,0 +1,16 @@
+{
+  "directory": "./supabase/migrations",
+  "schema": "app",
+  "ledgerTable": "schema_migrations",
+  "lockName": "ztribe-chat-schema-migrations",
+  "files": [
+    { "file": "20261030120000_app_schema.sql", "version": "20261030120000_app_schema" }
+  ],
+  "security": {
+    "schemas": ["app"],
+    "requireRlsOn": ["app.profiles", "app.messages"],
+    "allowedDefinerOwners": ["chat_api_runtime_owner"],
+    "deniedExecuteRoles": ["anon", "authenticated"],
+    "deniedTableDmlRoles": ["anon", "authenticated"]
+  }
+}
