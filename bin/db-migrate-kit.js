@@ -2,7 +2,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import pg from "pg";
-import { applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity } from "../src/index.js";
+import { applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget } from "../src/index.js";
 
 const [command = "status", ...args] = process.argv.slice(2);
 const configPath = resolve(process.cwd(), args.find(arg => arg.startsWith("--config="))?.slice(9) ?? "migration-kit.config.json");
@@ -14,17 +14,27 @@ if (!databaseUrl) throw new Error("Set MIGRATION_DATABASE_URL (preferred) or DAT
 const parsed = new URL(databaseUrl);
 if (!["postgres:","postgresql:"].includes(parsed.protocol)) throw new Error("Database URL must use postgres:// or postgresql://.");
 const local = ["localhost","127.0.0.1","::1","[::1]"].includes(parsed.hostname);
-if (!local && command === "apply" && !args.includes("--allow-remote")) throw new Error("Remote database apply blocked. Pass --allow-remote only after confirming the target is Dev.");
+if (!local && command === "apply" && !args.includes("--allow-remote")) throw new Error("Remote database apply blocked; --allow-remote must be explicit.");
+if (!local && command === "apply" && (!config.targetIdentity || config.targetIdentity.environment !== "dev")) throw new Error("Remote apply requires independently provisioned targetIdentity for the Dev database.");
+if (parsed.search) throw new Error("Database URL query parameters are unsupported; configure TLS explicitly to prevent SSL override.");
 if (command === "apply" && !args.includes("--yes")) throw new Error("Apply requires explicit --yes confirmation.");
 const pool = new pg.Pool({
-  connectionString: databaseUrl,
+  host: parsed.hostname,
+  port: Number(parsed.port || "5432"),
+  user: decodeURIComponent(parsed.username),
+  password: decodeURIComponent(parsed.password),
+  database: decodeURIComponent(parsed.pathname.slice(1) || "postgres"),
   max: 1,
   connectionTimeoutMillis: 10000,
   application_name: "db-migration-kit-cli",
   ssl: local ? undefined : { rejectUnauthorized: true },
 });
 try {
-  const options = { ...config, directory: resolve(process.cwd(), config.directory) };
+  const options = {
+    ...config,
+    directory: resolve(process.cwd(), config.directory),
+    ...(!local && command === "apply" ? { verifyTarget: client => verifyDatabaseTarget(client, config.targetIdentity) } : {}),
+  };
   if (command === "status") {
     const report = await inspectMigrations(pool, options);
     console.log(JSON.stringify({ ok: report.ok, applied: report.applied.length, pending: report.pending.map(x=>x.version), unknown: report.unknown, drift: report.drift }, null, 2));
