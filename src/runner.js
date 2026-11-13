@@ -3,6 +3,7 @@ import { qualifiedName, quoteIdentifier } from "./identifiers.js";
 import { withMigrationLock } from "./lock.js";
 import { hardenMigrationLedger } from "./ledger-security.js";
 import { autoBaselineVerifiedCatalog, preflightAutoBaselineCatalog } from "./auto-baseline.js";
+import { preflightMigrationCapabilities } from "./capability.js";
 
 const DEFAULTS = {
   schema: "public",
@@ -99,6 +100,7 @@ export async function applyMigrations(pool, options) {
       const nonTransactional = /^--[ \t]*migrate:non-transactional(?:-index)?[ \t]*$/mi.test(migration.sql);
       if (nonTransactional) {
         if (config.allowNonTransactional !== true) throw new Error(`non-transactional migration ${migration.version} requires explicit allowNonTransactional=true; partial execution cannot be rolled back`);
+        if (config.capabilityPreflight !== false) await preflightMigrationCapabilities(client, migration.sql);
         if (typeof config.beforeMigration === "function") await config.beforeMigration(client, migration, config);
         await client.query(migration.sql);
         await client.query(
@@ -108,6 +110,7 @@ export async function applyMigrations(pool, options) {
       } else {
         await client.query("BEGIN");
         try {
+          if (config.capabilityPreflight !== false) await preflightMigrationCapabilities(client, migration.sql);
           if (typeof config.beforeMigration === "function") await config.beforeMigration(client, migration, config);
           await client.query(migration.sql);
           await client.query(
