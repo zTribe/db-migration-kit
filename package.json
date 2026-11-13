@@ -4,6 +4,7 @@
   "description": "Shared PostgreSQL migration runner, checksum auditor, local CLI and runtime security catalog checks for zTribe services.",
   "type": "module",
   "exports": {
+    "./verify-migration-upgrade": "./src/verify-migration-upgrade.js",
     ".": {
       "types": "./src/index.d.ts",
       "import": "./src/index.js"

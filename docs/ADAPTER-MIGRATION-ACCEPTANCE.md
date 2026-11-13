@@ -82,3 +82,15 @@ against production without change approval and exact index/target review.
 The package's PostgreSQL 17 fixture suite exercises new generic behavior,
 but does **not** establish full parity with the two consumers' historical
 migration chains or Production Supabase configuration.
+# Consumer migration release gate
+
+Use `verifyMigrationUpgrade` from `@ztribe/db-migration-kit/verify-migration-upgrade` in the consumer integration suite. Pass the separate migration pool and role, expected ledger snapshots (`before` and `after`), a `readLedger(pool)` callback, the normal `apply(pool)` entry point adapted to return the applied versions, and `verifyPermissions(pool)` for consumer-specific catalog assertions.
+
+Indexer separates the migration connection from the runtime connection. Carry that separation into the test harness and verify the identity on the connection that actually executes the SQL. Testing runtime permissions after applying migrations as a superuser does not establish that the production migrator can apply them.
+
+1. In disposable PostgreSQL, restore a representative deployed ledger and its matching schema, object owners, grants, and role memberships. Use a fixture administrator to provision this state.
+2. Open a separate connection as the deployment-equivalent migration role. Assert `rolsuper=false` and check effective owner membership and grant authority before running the consumer's normal entry point. Use the exact checked-out migration manifest, including checksum checks and consumer hooks.
+3. Apply the entire pending suffix. Verify the resulting ledger, a no-op repeat, final object ownership, and effective ACLs as the runtime and client roles. Include a failing transactional migration and verify both DDL rollback and absence of its ledger row.
+4. Make this a required consumer CI check. Keep fresh-install and superuser tests for their own coverage. The generic Kit tests cannot supply consumer-specific historical schema or production-equivalent role fixtures.
+
+Chat's `51 → 52` upgrade exposed why this matters: checking that a file contains a temporary grant does not establish that PostgreSQL executes it before every owner-sensitive statement. Execute the real SQL, and verify temporary privileges are gone afterwards.
