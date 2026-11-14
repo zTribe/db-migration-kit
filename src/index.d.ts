@@ -30,3 +30,16 @@ export function generateCandidateFromMigratedDatabase(pool:any,migrationConfig:M
 export function assertApprovedSecurityPolicy(policy:any):any;
 
 export function preflightMigrationCapabilities(client: any, sql: string): Promise<void>;
+export type StateRow = Record<string, unknown>;
+export type PermissionState = Record<"schemas" | "objects" | "columnPrivileges" | "functions" | "policies" | "roles" | "memberships", StateRow[]>;
+export type SchemaState = Record<"tables" | "columns" | "constraints" | "indexes" | "triggers" | "functions" | "policies" | "publications", StateRow[]>;
+export type TargetState = { version: 1; schema: SchemaState | null; permissions: PermissionState };
+export type PermissionChange = { section: keyof PermissionState; identity: string[]; previous: StateRow | null; desired: StateRow | null };
+export type MigrationPlan = { changes: (PermissionChange & { sql: string | null })[]; structure: unknown[]; manual: boolean; digest: string };
+export type MigrationReview = { digest: string; reason: string };
+export function loadMigrationConfig(path: string): Promise<MigrationConfig & { targetState?: string; review?: string; discovery?: "counter" | "timestamp" }>;
+export function diffPermissions(before: PermissionState, after: PermissionState): PermissionChange[];
+export function planMigration(before: TargetState, after: TargetState): MigrationPlan;
+export function assertMigrationReview(plan: MigrationPlan, review?: MigrationReview): void;
+export function generateMigrationSql(before: TargetState, after: TargetState, review?: MigrationReview): string;
+export function createMigration(config: Awaited<ReturnType<typeof loadMigrationConfig>>, name: string, sql: string, now?: Date): Promise<string>;

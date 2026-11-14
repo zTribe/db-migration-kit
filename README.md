@@ -78,3 +78,25 @@ const config = {
 ## Adoption status
 
 The standalone repo has real PostgreSQL 17 tests for the generic Runner and simulated Chat/Indexer adapter workflows. **Neither live Chat nor live Indexer repo has yet switched to consume this standalone package.** CI success here must not be interpreted as full consumer compatibility or production readiness. Never run against Production until full cross-repo tests and a separately authorized deployment.
+
+### Declarative migration planning
+
+A JSON config can use a fixed `files` manifest or `discovery: "counter"`
+(three digits) or `discovery: "timestamp"` (14 UTC digits). Paths resolve
+relative to the config. Use `validate` to validate the manifest offline.
+
+Set `targetState` to a JSON document with `version: 1`, a structural
+catalog from `readSchemaCatalog` (or `schema: null` for permission-only
+exports), and a `permissions` object with arrays for schemas, objects,
+columnPrivileges, functions, policies, roles, and memberships.
+`plan --from=current.json` prints the diff and proposed SQL.
+`review --from=current.json` checks a configured review file with the
+plan digest and a nonempty reason. The digest binds an approval to a
+specific diff. Require a human repository review for changes to approval
+files and the CI workflow.
+
+`generate --from=current.json` prints approved SQL. Add `--name=description`
+to write the next forward migration without overwriting an existing file.
+Simple schema, table and sequence ACLs and table RLS flags can be rendered.
+Plans with unsupported changes require explicit SQL. Plan and generate
+operate offline and perform no database writes.

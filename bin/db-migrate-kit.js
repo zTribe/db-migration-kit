@@ -1,14 +1,35 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import pg from "pg";
-import { applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget } from "../src/index.js";
+import { createMigration, loadMigrationConfig, planMigration, assertMigrationReview, generateMigrationSql, applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget } from "../src/index.js";
 
 const [command = "status", ...args] = process.argv.slice(2);
 const configPath = resolve(process.cwd(), args.find(arg => arg.startsWith("--config="))?.slice(9) ?? "migration-kit.config.json");
-let config;
-try { config = JSON.parse(await readFile(configPath, "utf8")); }
-catch (error) { throw new Error(`Cannot read ${configPath}. Copy migration-kit.config.example.json and edit it.`, { cause: error }); }
+const config = await loadMigrationConfig(configPath);
+const readJson = async path => JSON.parse(await readFile(path, "utf8"));
+
+if (["validate", "plan", "review", "generate"].includes(command)) {
+  if (command !== "validate") {
+    const from = args.find(arg => arg.startsWith("--from="))?.slice(7);
+    if (!from || !config.targetState) throw new Error("Specify --from=path and configure targetState");
+    const before = await readJson(from);
+    const after = await readJson(config.targetState);
+    const plan = planMigration(before, after);
+    if (command === "plan") console.log(JSON.stringify(plan, null, 2));
+    else {
+      const review = config.review ? await readJson(config.review) : undefined;
+      if (command === "review") assertMigrationReview(plan, review);
+      else {
+        const sql = generateMigrationSql(before, after, review);
+        const name = args.find(arg => arg.startsWith("--name="))?.slice(7);
+        console.log(name ? await createMigration(config, name, sql) : sql);
+      }
+    }
+  }
+  process.exit(0);
+}
+
+const { default: pg } = await import("pg");
 const databaseUrl = process.env.MIGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("Set MIGRATION_DATABASE_URL (preferred) or DATABASE_URL.");
 const parsed = new URL(databaseUrl);

@@ -1,4 +1,5 @@
 export { checksumText, loadManifest } from "./checksum.js";
+export { loadMigrationConfig } from "./config.js";
 export { applyMigrations, baselineMigrations, auditMigrations, inspectMigrations } from "./runner.js";
 export { inspectRuntimeSecurity, SECURITY_CATALOG_SQL } from "./security.js";
 export { verifyDatabaseTarget } from "./identity.js";
@@ -14,3 +15,5 @@ export { autoBaselineVerifiedCatalog, omitMigrationLedger } from "./auto-baselin
 export { inspectConcurrentIndex, recoverInvalidConcurrentIndex } from "./index-recovery.js";
 
 export { preflightMigrationCapabilities } from "./capability.js";
+export { diffPermissions, planMigration, assertMigrationReview, generateMigrationSql } from "./migration-plan.js";
+export { createMigration } from "./create-migration.js";
