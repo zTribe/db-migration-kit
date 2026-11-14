@@ -76,3 +76,58 @@ export async function compareUpgradeAcl(client, base, repository) {
   for (const id of byKey.keys()) diffs.push(`unexpected default ACL ${id}`);
   return diffs;
 }
+
+/** Apply supplemental ACLs to a fresh, disposable PostgreSQL upgrade fixture. */
+export async function restoreUpgradeAcl(client, base, repository) {
+  if (!/^[a-f0-9]{40}$/i.test(base)) throw new Error("Expected an upgrade base commit SHA");
+  const snapshot = JSON.parse(execFileSync("git",
+    ["show", `${base}:db/migration-permissions-extra.json`], { cwd: repository, encoding: "utf8" }));
+  const identifier = name => {
+    if (typeof name !== "string" || !/^[a-z_][a-z0-9_]*$/.test(name)) {
+      throw new Error("Unsupported ACL fixture identifier");
+    }
+    return `"${name}"`;
+  };
+  const { rows: [database] } = await client.query("SELECT current_database() AS name");
+  const kinds = { S: "SEQUENCES", r: "TABLES", f: "FUNCTIONS" };
+  const privileges = {
+    C: "CREATE", T: "TEMPORARY", c: "CONNECT", r: "SELECT", w: "UPDATE", U: "USAGE",
+    a: "INSERT", d: "DELETE", D: "TRUNCATE", x: "REFERENCES", t: "TRIGGER", m: "MAINTAIN", X: "EXECUTE",
+  };
+  await client.query("BEGIN");
+  try {
+    const ensureRole = async name => {
+      const quoted = identifier(name);
+      const { rows: [row] } = await client.query("SELECT EXISTS (SELECT FROM pg_roles WHERE rolname=$1) AS present", [name]);
+      if (!row.present) await client.query(`CREATE ROLE ${quoted} NOLOGIN`);
+    };
+    const apply = async (prefix, target, acl, owner) => {
+      const { rows: [row] } = await client.query("SELECT $1::text[] AS entries", [acl]);
+      for (const entry of row.entries) {
+        const match = /^([a-z_0-9]*)=([a-zA-Z*]+)\/([a-z_0-9]+)$/.exec(entry);
+        if (!match || match[3] !== owner) throw new Error("Unsupported ACL fixture grant chain");
+        const [, name, letters] = match;
+        if (name) await ensureRole(name);
+        for (const token of letters.match(/[a-zA-Z]\*?/g) ?? []) {
+          if (!Object.hasOwn(privileges, token[0])) throw new Error("Unsupported ACL privilege");
+          await client.query(`${prefix}GRANT ${privileges[token[0]]} ON ${target} TO ${name ? identifier(name) : "PUBLIC"}${token.endsWith("*") ? " WITH GRANT OPTION" : ""}`);
+        }
+      }
+    };
+    const dbTarget = `DATABASE ${identifier(database.name)}`;
+    await apply("", dbTarget, snapshot.database.effective_acl, snapshot.database.owner);
+    for (const row of snapshot.defaultPrivileges) {
+      await ensureRole(row.owner);
+      if (!Object.hasOwn(kinds, row.object_type)) throw new Error("Unsupported default ACL object type");
+      if (row.schema) await client.query(`CREATE SCHEMA IF NOT EXISTS ${identifier(row.schema)}`);
+      const prefix = `ALTER DEFAULT PRIVILEGES FOR ROLE ${identifier(row.owner)}${row.schema ? ` IN SCHEMA ${identifier(row.schema)}` : ""} `;
+      await apply(prefix, kinds[row.object_type], row.acl, row.owner);
+    }
+    const differences = await compareUpgradeAcl(client, base, repository);
+    if (differences.length) throw new Error(`Upgrade fixture ACL mismatch: ${differences.join("; ")}`);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}

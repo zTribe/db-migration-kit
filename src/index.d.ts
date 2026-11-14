@@ -55,3 +55,4 @@ export function resolveUpgradePrefix(config: MigrationConfig, base: string, repo
 }>;
 export function restoreUpgradeRoles(client: any, base: string, repository: string, names: string[]): Promise<void>;
 export function compareUpgradeAcl(client: any, base: string, repository: string): Promise<string[]>;
+export function restoreUpgradeAcl(client: any, base: string, repository: string): Promise<void>;
