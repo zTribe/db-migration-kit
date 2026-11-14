@@ -54,3 +54,4 @@ export function resolveUpgradePrefix(config: MigrationConfig, base: string, repo
   pending: Awaited<ReturnType<typeof loadManifest>>;
 }>;
 export function restoreUpgradeRoles(client: any, base: string, repository: string, names: string[]): Promise<void>;
+export function compareUpgradeAcl(client: any, base: string, repository: string): Promise<string[]>;
