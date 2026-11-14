@@ -10,6 +10,8 @@ const keys = {
   policies: ["schema", "tablename", "policyname"],
   roles: ["rolname"],
   memberships: ["member", "parent"],
+  databasePrivileges: ["scope"],
+  defaultPrivileges: ["owner", "schema", "kind"],
 };
 
 function canonical(value) {
@@ -22,7 +24,7 @@ function indexRows(rows, fields, section) {
   if (!Array.isArray(rows)) throw new Error(`Missing permissions section: ${section}`);
   const index = new Map();
   for (const row of rows) {
-    if (!row || fields.some(field => typeof row[field] !== "string" || (!row[field] && field !== "arguments"))) {
+    if (!row || fields.some(field => typeof row[field] !== "string" || (!row[field] && field !== "arguments" && !(section === "defaultPrivileges" && field === "schema")))) {
       throw new Error(`Invalid identity in permissions section: ${section}`);
     }
     const key = JSON.stringify(fields.map(field => row[field]));
@@ -34,6 +36,7 @@ function indexRows(rows, fields, section) {
 
 export function diffPermissions(before, after) {
   return Object.entries(keys).flatMap(([section, fields]) => {
+    if (["databasePrivileges", "defaultPrivileges"].includes(section) && before?.[section] === undefined && after?.[section] === undefined) return [];
     const from = indexRows(before?.[section], fields, section);
     const to = indexRows(after?.[section], fields, section);
     return [...new Set([...from.keys(), ...to.keys()])].sort().flatMap(key => {

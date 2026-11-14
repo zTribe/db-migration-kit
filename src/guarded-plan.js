@@ -19,6 +19,9 @@ export function guardMigration(version, before, after, review) {
   }
   async function verify(client, expected, stage) {
     const actual = await readTargetState(client, schemas, expected.schema !== null);
+    for (const section of ["databasePrivileges", "defaultPrivileges"]) {
+      if (expected.permissions[section] === undefined) delete actual.permissions[section];
+    }
     const diff = planMigration(actual, expected);
     if (diff.changes.length || diff.structure.length) {
       throw new Error(`Migration ${version} ${stage} differs from reviewed state (${diff.digest})`);

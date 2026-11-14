@@ -55,6 +55,12 @@ export async function loadMigrationConfig(path) {
       });
       const { before, after, review, sqlChecksum } = JSON.parse(contents);
       if (sqlChecksum !== migration.checksum) throw new Error(`Review SQL checksum mismatch: ${migration.version}`);
+      for (const state of [before, after]) {
+        if (state?.permissions?.databasePrivileges?.length !== 1 ||
+            !Array.isArray(state?.permissions?.defaultPrivileges)) {
+          throw new Error(`Migration review must cover database and default privileges: ${migration.version}`);
+        }
+      }
       const guard = guardMigration(migration.version, before, after, review);
       config.migrationGuards.set(migration.version, {
         ...guard,

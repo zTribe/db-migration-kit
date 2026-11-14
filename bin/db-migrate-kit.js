@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFile, writeFile, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
-import { checksumText, createMigration, loadMigrationConfig, planMigration, assertMigrationReview, generateMigrationSql, applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget } from "../src/index.js";
+import { readTargetState, checksumText, createMigration, loadMigrationConfig, planMigration, assertMigrationReview, generateMigrationSql, applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget } from "../src/index.js";
 
 const [command = "status", ...args] = process.argv.slice(2);
 const configPath = resolve(process.cwd(), args.find(arg => arg.startsWith("--config="))?.slice(9) ?? "migration-kit.config.json");
@@ -70,7 +70,20 @@ try {
     directory: resolve(process.cwd(), config.directory),
     ...(!local && command === "apply" ? { verifyTarget: client => verifyDatabaseTarget(client, config.targetIdentity) } : {}),
   };
-  if (command === "status") {
+  if (command === "snapshot") {
+    const schemas = args.find(arg => arg.startsWith("--schemas="))?.slice(10).split(",") ?? [config.schema ?? "public"];
+    if (schemas.some(schema => !schema.trim())) throw new Error("Specify nonempty schema names");
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const state = await readTargetState(client, schemas);
+      if (state.permissions.schemas.length !== new Set(schemas).size) throw new Error("Snapshot schema does not exist");
+      console.log(JSON.stringify(state, null, 2));
+    } finally {
+      try { await client.query("ROLLBACK"); }
+      finally { client.release(); }
+    }
+  } else if (command === "status") {
     const report = await inspectMigrations(pool, options);
     console.log(JSON.stringify({ ok: report.ok, applied: report.applied.length, pending: report.pending.map(x=>x.version), unknown: report.unknown, drift: report.drift }, null, 2));
     if (!report.ok) process.exitCode = 1;
@@ -86,7 +99,7 @@ try {
     console.log(JSON.stringify(report, null, 2));
     if (!report.ok) process.exitCode = 1;
   } else {
-    throw new Error("Usage: db-migrate-kit <status|audit|apply|security> [--config=path] [--yes] [--allow-remote]");
+    throw new Error("Usage: db-migrate-kit <status|audit|apply|security|snapshot> [--config=path] [--yes] [--allow-remote]");
   }
 } finally {
   await pool.end();

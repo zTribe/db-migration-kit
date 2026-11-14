@@ -7,6 +7,13 @@ export async function readPermissionState(client, schemas) {
       WHERE n.nspname=ANY($1::text[]) AND c.relkind IN ('r','p','v','m','S','f')
     )
     SELECT
+      ARRAY(SELECT jsonb_build_object('scope', 'current', 'owner', pg_catalog.pg_get_userbyid(datdba),
+        'acl', to_jsonb(ARRAY(SELECT entry::text FROM unnest(coalesce(datacl, pg_catalog.acldefault('d', datdba))) entry ORDER BY entry::text)))
+        FROM pg_catalog.pg_database WHERE datname=current_database()) AS "databasePrivileges",
+      ARRAY(SELECT jsonb_build_object('owner', pg_catalog.pg_get_userbyid(d.defaclrole),
+        'schema', coalesce(n.nspname, ''), 'kind', d.defaclobjtype,
+        'acl', to_jsonb(ARRAY(SELECT entry::text FROM unnest(d.defaclacl) entry ORDER BY entry::text)))
+        FROM pg_catalog.pg_default_acl d LEFT JOIN pg_catalog.pg_namespace n ON n.oid=d.defaclnamespace) AS "defaultPrivileges",
       ARRAY(SELECT to_jsonb(x) FROM (
         SELECT nspname AS schema, pg_catalog.pg_get_userbyid(nspowner) AS owner, nspacl::text AS acl
         FROM pg_catalog.pg_namespace WHERE nspname=ANY($1::text[])

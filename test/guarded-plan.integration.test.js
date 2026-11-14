@@ -54,6 +54,16 @@ test("config → generated migration → rollback on unauthorized privilege → 
       ...guarded, migrationGuard: guardMigration("002_message_body", before, target, { digest, reason: "Test transaction control" }),
     }), /leave transaction control to Kit/);
     assert.deepEqual(planMigration(await capture(), before).structure, []);
+    for (const unauthorized of [
+      "ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO PUBLIC;",
+      "REVOKE TEMPORARY ON DATABASE " + '"' + new URL(process.env.PG_TEST_URL).pathname.slice(1).replaceAll('"', '""') + '" FROM PUBLIC;',
+    ]) {
+      await writeFile(migration, sql + unauthorized + "\n");
+      await assert.rejects(applyMigrations(pool, {
+        ...guarded, migrationGuard: guardMigration("002_message_body", before, target, { digest, reason: "Test ACL rollback" }),
+      }), /result differs/);
+      assert.deepEqual(planMigration(await capture(), before).changes, []);
+    }
     await writeFile(migration, sql);
     assert.deepEqual((await applyMigrations(pool, await loadMigrationConfig(path))).applied, ["002_message_body"]);
     assert.deepEqual(planMigration(await capture(), target).structure, []);

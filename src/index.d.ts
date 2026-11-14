@@ -31,7 +31,7 @@ export function assertApprovedSecurityPolicy(policy:any):any;
 
 export function preflightMigrationCapabilities(client: any, sql: string): Promise<void>;
 export type StateRow = Record<string, unknown>;
-export type PermissionState = Record<"schemas" | "objects" | "columnPrivileges" | "functions" | "policies" | "roles" | "memberships", StateRow[]>;
+export type PermissionState = Record<"schemas" | "objects" | "columnPrivileges" | "functions" | "policies" | "roles" | "memberships", StateRow[]> & Partial<Record<"databasePrivileges" | "defaultPrivileges", StateRow[]>>;
 export type SchemaState = Record<"tables" | "columns" | "constraints" | "indexes" | "triggers" | "functions" | "policies" | "publications", StateRow[]>;
 export type TargetState = { version: 1; schema: SchemaState | null; permissions: PermissionState };
 export type PermissionChange = { section: keyof PermissionState; identity: string[]; previous: StateRow | null; desired: StateRow | null };
