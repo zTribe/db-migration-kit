@@ -114,3 +114,10 @@ A guard names one transactional migration. Unguarded historical migrations
 continue through the existing Runner path. Use comparable PostgreSQL
 instances and schema coverage because raw role and ACL state includes
 environment-specific entries.
+
+For default enforcement, configure `historicalManifest` as a JSON map of
+existing migration versions to their SHA-256 checksums. Freeze that map at
+adoption. Every subsequent SQL migration needs a sibling
+`<name>.sql.review.json` with the before and after states, review, and SQL
+checksum. The generate command writes both files. Explicit SQL can also
+use this format and undergo the same transactional catalog checks.

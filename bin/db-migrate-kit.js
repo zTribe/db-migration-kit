@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
-import { createMigration, loadMigrationConfig, planMigration, assertMigrationReview, generateMigrationSql, applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget } from "../src/index.js";
+import { checksumText, createMigration, loadMigrationConfig, planMigration, assertMigrationReview, generateMigrationSql, applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget } from "../src/index.js";
 
 const [command = "status", ...args] = process.argv.slice(2);
 const configPath = resolve(process.cwd(), args.find(arg => arg.startsWith("--config="))?.slice(9) ?? "migration-kit.config.json");
@@ -22,7 +22,21 @@ if (["validate", "plan", "review", "generate"].includes(command)) {
       else {
         const sql = generateMigrationSql(before, after, review);
         const name = args.find(arg => arg.startsWith("--name="))?.slice(7);
-        console.log(name ? await createMigration(config, name, sql) : sql);
+        if (!name) console.log(sql);
+        else {
+          const file = await createMigration(config, name, sql);
+          try {
+            if (config.requireMigrationGuards) {
+              await writeFile(file + ".review.json", JSON.stringify({
+                before, after, review, sqlChecksum: checksumText(sql.trimEnd() + "\n"),
+              }, null, 2) + "\n", { flag: "wx" });
+            }
+          } catch (error) {
+            await unlink(file);
+            throw error;
+          }
+          console.log(file);
+        }
       }
     }
   }

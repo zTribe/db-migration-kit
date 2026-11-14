@@ -68,6 +68,14 @@ export async function inspectMigrations(pool, options) {
 export async function applyMigrations(pool, options) {
   const config = { ...DEFAULTS, ...options };
   const migrations = await loadManifest(config);
+  if (config.requireMigrationGuards) {
+    for (const migration of migrations) {
+      if (config.historicalChecksums?.[migration.version] === migration.checksum) continue;
+      if (!config.migrationGuards?.has(migration.version)) {
+        throw new Error(`Migration requires a review: ${migration.version}`);
+      }
+    }
+  }
   const appliedNow = [];
   return withMigrationLock(pool, config, async client => {
     const preflight = compareLedger(await readLedger(client, config.schema, config.ledgerTable), migrations, config);
@@ -97,7 +105,8 @@ export async function applyMigrations(pool, options) {
     const byVersion = new Set(rows.map(row => row.version));
     for (const migration of migrations) {
       if (byVersion.has(migration.version)) continue;
-      const guard = config.migrationGuard?.version === migration.version ? config.migrationGuard : undefined;
+      const guard = config.migrationGuards?.get(migration.version) ??
+        (config.migrationGuard?.version === migration.version ? config.migrationGuard : undefined);
       const nonTransactional = /^--[ \t]*migrate:non-transactional(?:-index)?[ \t]*$/mi.test(migration.sql);
       if (nonTransactional) {
         if (guard) throw new Error("Guarded migrations must be transactional");

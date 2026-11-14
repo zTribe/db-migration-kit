@@ -1,6 +1,6 @@
 {
   "name": "@ztribe/db-migration-kit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shared PostgreSQL migration runner, checksum auditor, local CLI and runtime security catalog checks for zTribe services.",
   "type": "module",
   "exports": {
