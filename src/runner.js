@@ -65,6 +65,25 @@ export async function inspectMigrations(pool, options) {
   }
 }
 
+async function assertServiceOnlyFunctions(client, signatures = []) {
+  for (const signature of signatures) {
+    const { rows: [permission] } = await client.query(`
+      SELECT p.prosecdef AS definer,
+             pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE') AS anon,
+             pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authenticated,
+             pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE') AS service,
+             EXISTS (
+               SELECT 1 FROM pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner)))
+               WHERE grantee = 0 AND privilege_type = 'EXECUTE'
+             ) AS public
+      FROM pg_catalog.pg_proc p WHERE p.oid = pg_catalog.to_regprocedure($1)
+    `, [signature]);
+    if (!permission?.definer || !permission.service || permission.anon || permission.authenticated || permission.public) {
+      throw new Error(`Service-only function policy failed: ${signature}`);
+    }
+  }
+}
+
 export async function applyMigrations(pool, options) {
   const config = { ...DEFAULTS, ...options };
   const migrations = await loadManifest(config);
@@ -125,7 +144,10 @@ export async function applyMigrations(pool, options) {
           if (typeof config.beforeMigration === "function") await config.beforeMigration(client, migration, config);
           if (guard) await guard.before(client, migration);
           await client.query(migration.sql);
-          if (guard) await guard.after(client);
+          if (guard) {
+            await assertServiceOnlyFunctions(client, config.serviceOnlyFunctions);
+            await guard.after(client);
+          }
           await client.query(
             `INSERT INTO ${qualifiedName(config.schema, config.ledgerTable)} (version,name,checksum,source) VALUES ($1,$2,$3,'migration')`,
             [migration.version, migration.name, migration.checksum],

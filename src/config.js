@@ -28,6 +28,10 @@ export async function loadMigrationConfig(path) {
     if (config.files !== undefined) throw new Error("Specify files or discovery");
     config.files = files;
   }
+  if (config.serviceOnlyFunctions !== undefined && (!Array.isArray(config.serviceOnlyFunctions) ||
+      config.serviceOnlyFunctions.some(signature => typeof signature !== "string" || !signature.trim()))) {
+    throw new Error("Invalid serviceOnlyFunctions configuration");
+  }
   const manifest = await loadManifest(config);
   if (config.historicalManifest !== undefined) {
     const historical = JSON.parse(await readFile(resolve(root, config.historicalManifest), "utf8"));
