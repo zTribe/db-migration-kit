@@ -49,3 +49,8 @@ export function guardMigration(version: string, before: TargetState, after: Targ
   before(client: any, migration?: { sql: string }): Promise<void>;
   after(client: any): Promise<void>;
 };
+export function resolveUpgradePrefix(config: MigrationConfig, base: string, repository: string): Promise<{
+  existing: Awaited<ReturnType<typeof loadManifest>>;
+  pending: Awaited<ReturnType<typeof loadManifest>>;
+}>;
+export function restoreUpgradeRoles(client: any, base: string, repository: string, names: string[]): Promise<void>;
