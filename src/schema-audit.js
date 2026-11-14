@@ -136,11 +136,11 @@ export function compareSchemaCatalog(expected,actual){
     const old=new Map(left[section].map(x=>[key(x),x]));
     const current=new Map(right[section].map(x=>[key(x),x]));
     for(const [name,desired] of old){
-      if(!current.has(name))differences.push({section,key:name,code:"MISSING"});
+      if(!current.has(name))differences.push({section,key:name,code:"MISSING",expected:desired});
       else if(JSON.stringify(desired)!==JSON.stringify(current.get(name)))
         differences.push({section,key:name,code:"CHANGED",expected:desired,actual:current.get(name)});
     }
-    for(const name of current.keys())if(!old.has(name))differences.push({section,key:name,code:"UNEXPECTED"});
+    for(const name of current.keys())if(!old.has(name))differences.push({section,key:name,code:"UNEXPECTED",actual:current.get(name)});
   }
   return {ok:differences.length===0,differences};
 }

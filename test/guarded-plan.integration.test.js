@@ -88,9 +88,21 @@ test("review accepts an equivalent migration role under a different login name",
       CREATE TABLE kit_role_probe.messages (id integer)`);
     const before = normalizeMigrationRole(await readTargetState(client, ["kit_role_probe"]), "kit_snapshot_login");
     await client.query("RESET ROLE; ALTER ROLE kit_snapshot_login RENAME TO kit_deploy_login; SET ROLE kit_deploy_login");
-    const guard = guardMigration("role_portability", before, before);
+    await client.query("RESET ROLE; CREATE ROLE kit_environment_only; SET ROLE kit_deploy_login");
+    const target = structuredClone(before);
+    target.schema.columns.push({ schema_name: "kit_role_probe", table_name: "messages", name: "note",
+      type: "text", not_null: false, default_expr: null, identity: "", generated: "" });
+    const review = { digest: planMigration(before, target).digest, reason: "Add optional note" };
+    const { generateMigrationSql } = await import("../src/index.js");
+    const sql = generateMigrationSql(before, target, review);
+    const guard = guardMigration("role_portability", before, target, review);
+    await client.query("SAVEPOINT probe");
     await guard.before(client);
-    await client.query("GRANT SELECT ON kit_role_probe.messages TO PUBLIC");
+    await client.query(sql);
+    await guard.after(client);
+    await client.query("ROLLBACK TO SAVEPOINT probe");
+    await guard.before(client);
+    await client.query(sql + "GRANT SELECT ON kit_role_probe.messages TO PUBLIC;");
     await assert.rejects(guard.after(client), /result differs/);
   } finally {
     try { await client.query("ROLLBACK"); }
