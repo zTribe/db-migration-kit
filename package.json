@@ -8,6 +8,10 @@
     ".": {
       "types": "./src/index.d.ts",
       "import": "./src/index.js"
+    },
+    "./testing": {
+      "types": "./src/testing.d.ts",
+      "import": "./src/testing.js"
     }
   },
   "bin": {

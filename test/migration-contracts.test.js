@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { verifyMigrationContracts } from "../src/migration-contracts.js";
+import { verifyMigrationContracts } from "../src/testing.js";
 
 test("project SQL contracts are validated through Kit without embedding project rules", async () => {
   const root = await mkdtemp(join(tmpdir(), "kit-contract-"));
