@@ -17,7 +17,8 @@ test("project SQL contracts are validated through Kit without embedding project 
     assert.deepEqual(await verifyMigrationContracts(config, [{
       version: "001_first", required: [/create table app\.example/i], forbidden: [/grant all to public/i]
     }]), [{ version: "001_first", checked: 2 }]);
-    await assert.rejects(verifyMigrationContracts(config, [{ version: "002_missing" }]), /migration missing/);
+    await assert.rejects(verifyMigrationContracts(config, [{ version: "002_missing", required: [/create table/i] }]), /migration missing/);
+    await assert.rejects(verifyMigrationContracts(config, [{ version: "001_first" }]), /must include assertions/);
     await assert.rejects(verifyMigrationContracts(config, [{ version: "001_first", required: [/drop table/i] }]), /required/);
     await assert.rejects(verifyMigrationContracts(config, [{ version: "001_first", forbidden: [/create table/i] }]), /forbidden/);
     await assert.rejects(verifyMigrationContracts(config, [{ version: "001_first", required: ["not-regexp"] }]), /RegExp/);

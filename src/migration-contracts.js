@@ -16,10 +16,14 @@ export async function verifyMigrationContracts(configPath, contracts) {
     if (!contract || typeof contract.version !== "string" || !contract.version) {
       throw new TypeError("contract.version must be a non-empty string");
     }
+    const required = contract.required ?? [];
+    const forbidden = contract.forbidden ?? [];
+    if (!Array.isArray(required) || !Array.isArray(forbidden)) throw new TypeError("required and forbidden must be arrays");
+    if (required.length + forbidden.length === 0) throw new Error(`migration contract must include assertions: ${contract.version}`);
     const migration = byVersion.get(contract.version);
     assert.ok(migration, `migration missing: ${contract.version}`);
     let checked = 0;
-    for (const [kind, patterns] of [["required", contract.required ?? []], ["forbidden", contract.forbidden ?? []]]) {
+    for (const [kind, patterns] of [["required", required], ["forbidden", forbidden]]) {
       if (!Array.isArray(patterns)) throw new TypeError(`${kind} must be an array`);
       for (const pattern of patterns) {
         if (!(pattern instanceof RegExp)) throw new TypeError(`${kind} entries must be RegExp`);
