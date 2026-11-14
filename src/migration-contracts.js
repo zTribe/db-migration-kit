@@ -3,8 +3,8 @@ import { loadMigrationConfig } from "./config.js";
 import { loadManifest } from "./checksum.js";
 
 /**
- * Validate project-owned SQL contracts without teaching Kit project-specific SQL.
- * A contract describes expected/forbidden patterns for one migration version.
+ * Run project-owned SQL contracts against Kit's validated migration manifest.
+ * Keep project-specific security requirements in the project, not in Kit.
  */
 export async function verifyMigrationContracts(configPath, contracts) {
   if (!Array.isArray(contracts)) throw new TypeError("contracts must be an array");
@@ -18,15 +18,17 @@ export async function verifyMigrationContracts(configPath, contracts) {
     }
     const migration = byVersion.get(contract.version);
     assert.ok(migration, `migration missing: ${contract.version}`);
+    let checked = 0;
     for (const [kind, patterns] of [["required", contract.required ?? []], ["forbidden", contract.forbidden ?? []]]) {
       if (!Array.isArray(patterns)) throw new TypeError(`${kind} must be an array`);
       for (const pattern of patterns) {
         if (!(pattern instanceof RegExp)) throw new TypeError(`${kind} entries must be RegExp`);
         if (kind === "required") assert.match(migration.sql, pattern, `${contract.version}: required ${pattern}`);
         else assert.doesNotMatch(migration.sql, pattern, `${contract.version}: forbidden ${pattern}`);
+        checked++;
       }
     }
-    results.push({ version: contract.version, checked: (contract.required?.length ?? 0) + (contract.forbidden?.length ?? 0) });
+    results.push({ version: contract.version, checked });
   }
   return results;
 }
