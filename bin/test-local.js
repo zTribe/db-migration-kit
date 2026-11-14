@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
 
-const [mode, project, ref = "HEAD"] = process.argv.slice(2);
-if (!["upgrade", "full"].includes(mode) || !["chat", "indexer"].includes(project)) {
-  throw new Error("Usage: db-migrate-kit-test <upgrade|full> <chat|indexer> [base-ref]");
+const [mode, project, ref = "HEAD", output = "before.json"] = process.argv.slice(2);
+if (!["upgrade", "full", "snapshot"].includes(mode) || !["chat", "indexer"].includes(project)) {
+  throw new Error("Usage: db-migrate-kit-test <upgrade|full|snapshot> <chat|indexer> [base-ref] [output]");
 }
-const base = mode === "upgrade"
+const base = mode !== "full"
   ? execFileSync("git", ["rev-parse", "--verify", "--end-of-options", ref + "^{commit}"], { encoding: "utf8" }).trim()
   : "";
 const name = "ztribe-migration-" + randomUUID();
 const docker = (...args) => execFileSync("docker", args, { encoding: "utf8" }).trim();
-const pattern = mode === "upgrade" ? "^PR migrations upgrade" :
+const pattern = mode !== "full" ? "^PR migrations upgrade" :
   project === "chat" ? "^shared migration runner applies the full" : "^Indexer replays the full";
 const file = project === "chat" ? "test/chat-migrate.integration.test.mjs" : "test/migration-runner.integration.mjs";
 docker("run", "--rm", "-d", "--name", name, "-e", "POSTGRES_PASSWORD=postgres", "-p", "127.0.0.1::5432", "postgres:17");
@@ -28,7 +29,7 @@ try {
   const result = spawnSync(process.execPath, ["--test", "--test-name-pattern", pattern, file], {
     stdio: "inherit",
     env: { ...process.env, CHAT_TEST_DATABASE_URL: url, INDEXER_UPGRADE_DATABASE_URL: url,
-      MIGRATION_UPGRADE_BASE_SHA: base, MIGRATION_LOCAL_FULL: mode === "full" ? "1" : "", MIGRATION_LOCAL_UPGRADE: mode === "upgrade" ? "1" : "" },
+      MIGRATION_UPGRADE_BASE_SHA: base, MIGRATION_SNAPSHOT_OUTPUT: mode === "snapshot" ? resolve(output) : "", MIGRATION_LOCAL_FULL: mode === "full" ? "1" : "", MIGRATION_LOCAL_UPGRADE: mode === "upgrade" ? "1" : "" },
   });
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
