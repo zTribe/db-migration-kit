@@ -15,7 +15,7 @@ test("project SQL contracts are validated through Kit without embedding project 
     }));
     const config = join(root, "config.json");
     assert.deepEqual(await verifyMigrationContracts(config, [{
-      version: "001_first", required: [/create table app\\.example/i], forbidden: [/grant all to public/i]
+      version: "001_first", required: [/create table app\.example/i], forbidden: [/grant all to public/i]
     }]), [{ version: "001_first", checked: 2 }]);
     await assert.rejects(verifyMigrationContracts(config, [{ version: "002_missing" }]), /migration missing/);
     await assert.rejects(verifyMigrationContracts(config, [{ version: "001_first", required: [/drop table/i] }]), /required/);
