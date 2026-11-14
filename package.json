@@ -11,7 +11,8 @@
     }
   },
   "bin": {
-    "db-migrate-kit": "./bin/db-migrate-kit.js"
+    "db-migrate-kit": "./bin/db-migrate-kit.js",
+    "db-migrate-kit-test": "./bin/test-local.js"
   },
   "files": [
     "src",
