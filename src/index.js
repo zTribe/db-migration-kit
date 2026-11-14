@@ -20,3 +20,4 @@ export { createMigration } from "./create-migration.js";
 export { readTargetState, guardMigration } from "./guarded-plan.js";
 export { resolveUpgradePrefix, restoreUpgradeRoles, compareUpgradeAcl, restoreUpgradeAcl } from "./upgrade-ci.js";
 export { normalizeMigrationRole } from "./migration-role.js";
+export { verifyMigrationContracts } from "./migration-contracts.js";

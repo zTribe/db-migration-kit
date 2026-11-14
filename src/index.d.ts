@@ -57,3 +57,5 @@ export function restoreUpgradeRoles(client: any, base: string, repository: strin
 export function compareUpgradeAcl(client: any, base: string, repository: string): Promise<string[]>;
 export function restoreUpgradeAcl(client: any, base: string, repository: string): Promise<void>;
 export function normalizeMigrationRole(state: TargetState, role: string): TargetState;
+
+export declare function verifyMigrationContracts(configPath: string, contracts: Array<{ version: string; required?: RegExp[]; forbidden?: RegExp[] }>): Promise<Array<{ version: string; checked: number }>>;
