@@ -11,13 +11,15 @@ const readJson = async path => JSON.parse(await readFile(path, "utf8"));
 if (["validate", "plan", "review", "generate"].includes(command)) {
   if (command !== "validate") {
     const from = args.find(arg => arg.startsWith("--from="))?.slice(7);
-    if (!from || !config.targetState) throw new Error("Specify --from=path and configure targetState");
+    const to = args.find(arg => arg.startsWith("--to="))?.slice(5) ?? config.targetState;
+    if (!from || !to) throw new Error("Specify --from=path and --to=path, or configure targetState");
     const before = await readJson(from);
-    const after = await readJson(config.targetState);
+    const after = await readJson(to);
     const plan = planMigration(before, after);
     if (command === "plan") console.log(JSON.stringify(plan, null, 2));
     else {
-      const review = config.review ? await readJson(config.review) : undefined;
+      const reviewPath = args.find(arg => arg.startsWith("--review="))?.slice(9) ?? config.review;
+      const review = reviewPath ? await readJson(reviewPath) : undefined;
       if (command === "review") assertMigrationReview(plan, review);
       else {
         const sql = generateMigrationSql(before, after, review);
