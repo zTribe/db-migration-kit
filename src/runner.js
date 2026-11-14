@@ -1,3 +1,4 @@
+import { assertManagedTransaction } from "./transaction-sql.js";
 import { loadManifest } from "./checksum.js";
 import { qualifiedName, quoteIdentifier } from "./identifiers.js";
 import { withMigrationLock } from "./lock.js";
@@ -126,6 +127,7 @@ export async function applyMigrations(pool, options) {
       if (byVersion.has(migration.version)) continue;
       const guard = config.migrationGuards?.get(migration.version) ??
         (config.migrationGuard?.version === migration.version ? config.migrationGuard : undefined);
+      if (guard) assertManagedTransaction(migration.sql, migration.version);
       const nonTransactional = /^--[ \t]*migrate:non-transactional(?:-index)?[ \t]*$/mi.test(migration.sql);
       if (nonTransactional) {
         if (guard) throw new Error("Guarded migrations must be transactional");

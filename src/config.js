@@ -1,3 +1,4 @@
+import { assertManagedTransaction } from "./transaction-sql.js";
 import { generateMigrationSql } from "./migration-plan.js";
 import { guardMigration } from "./guarded-plan.js";
 import { readFile, readdir } from "node:fs/promises";
@@ -46,6 +47,7 @@ export async function loadMigrationConfig(path) {
     config.migrationGuards = new Map();
     for (const migration of manifest) {
       if (Object.hasOwn(historical, migration.version)) continue;
+      assertManagedTransaction(migration.sql, migration.version);
       const sidecar = resolve(config.directory, migration.file + ".review.json");
       const contents = await readFile(sidecar, "utf8").catch(error => {
         if (error.code !== "ENOENT") throw error;

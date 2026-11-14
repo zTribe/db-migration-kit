@@ -49,6 +49,11 @@ test("config → generated migration → rollback on unauthorized privilege → 
     }), /result differs/);
     assert.deepEqual(planMigration(await capture(), before).changes, []);
     assert.deepEqual(planMigration(await capture(), before).structure, []);
+    await writeFile(migration, sql + "/* nested /* comment */ */ COMMIT;\n");
+    await assert.rejects(applyMigrations(pool, {
+      ...guarded, migrationGuard: guardMigration("002_message_body", before, target, { digest, reason: "Test transaction control" }),
+    }), /leave transaction control to Kit/);
+    assert.deepEqual(planMigration(await capture(), before).structure, []);
     await writeFile(migration, sql);
     assert.deepEqual((await applyMigrations(pool, await loadMigrationConfig(path))).applied, ["002_message_body"]);
     assert.deepEqual(planMigration(await capture(), target).structure, []);
