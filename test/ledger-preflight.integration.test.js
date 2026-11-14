@@ -1,10 +1,11 @@
+import pg from "pg";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checksumText, applyMigrations, baselineMigrations, inspectMigrations } from "../src/index.js";
-import { assertLocalTestDatabase, withLocalPostgres } from "../src/testing.js";
+import { assertLocalTestDatabase } from "../src/testing.js";
 
 test("local integration connection guard rejects remote or non-PostgreSQL targets", () => {
   assert.throws(() => assertLocalTestDatabase("postgresql://postgres:secret@db.example.supabase.co:5432/postgres"), /loopback/);
@@ -21,7 +22,9 @@ test("Kit rejects unknown ledger versions before executing new SQL", { skip: !pr
   try {
     await writeFile(join(dir, files[0]), "select 1;\n");
     await writeFile(join(dir, files[1]), `create table ${schema}.must_not_exist(id integer);\n`);
-    await withLocalPostgres(url, async pool => {
+    assertLocalTestDatabase(url);
+    const pool = new pg.Pool({ connectionString: url });
+    try {
       try {
         await pool.query(`drop schema if exists ${schema} cascade`);
         await pool.query(`create schema ${schema}`);
@@ -35,7 +38,7 @@ test("Kit rejects unknown ledger versions before executing new SQL", { skip: !pr
         assert.equal(state.rows[0].n, 1);
         assert.equal((await pool.query("select to_regclass($1) as x", [`${schema}.must_not_exist`])).rows[0].x, null);
       } finally { await pool.query(`drop schema if exists ${schema} cascade`); }
-    });
+    } finally { await pool.end(); }
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -46,7 +49,9 @@ test("Kit baseline only records the verified migration prefix", { skip: !process
   const files = ["001_first.sql", "002_second.sql", "003_third.sql"];
   try {
     for (const file of files) await writeFile(join(dir,file),"select 1;\n");
-    await withLocalPostgres(url, async pool => {
+    assertLocalTestDatabase(url);
+    const pool = new pg.Pool({ connectionString: url });
+    try {
       try {
         await pool.query(`drop schema if exists ${schema} cascade`);
         const config = { directory: dir, files, schema, lockName: "kit-verified-prefix-test", baselineThrough: "002_second", verifyBaseline: async () => true };
@@ -58,6 +63,6 @@ test("Kit baseline only records the verified migration prefix", { skip: !process
         const report = await inspectMigrations(pool, config);
         assert.deepEqual(report.pending.map(x=>x.version),["003_third"]);
       } finally { await pool.query(`drop schema if exists ${schema} cascade`); }
-    });
+    } finally { await pool.end(); }
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

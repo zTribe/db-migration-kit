@@ -1,5 +1,3 @@
-import pg from "pg";
-
 /** Test-only safety boundary. This module is never imported by the production entrypoint. */
 export function assertLocalTestDatabase(databaseUrl) {
   if (typeof databaseUrl !== "string" || !databaseUrl) throw new Error("Local test database URL is required");
@@ -12,14 +10,3 @@ export function assertLocalTestDatabase(databaseUrl) {
   return parsed;
 }
 
-/**
- * Open an explicitly local PostgreSQL test connection and always close it.
- * Schema setup/reset remains an explicit project callback; never auto-drop databases.
- */
-export async function withLocalPostgres(databaseUrl, run, { max = 4 } = {}) {
-  assertLocalTestDatabase(databaseUrl);
-  if (typeof run !== "function") throw new TypeError("run must be a function");
-  const pool = new pg.Pool({ connectionString: databaseUrl, max });
-  try { return await run(pool); }
-  finally { await pool.end(); }
-}
