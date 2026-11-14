@@ -63,15 +63,27 @@ function render(change) {
   ].filter(Boolean).join("\n");
 }
 
+const scalarTypes = new Set(["integer", "bigint", "text", "boolean", "uuid", "jsonb", "timestamp with time zone"]);
+
+function renderStructure(change, after) {
+  if (change.section !== "columns" || change.code !== "UNEXPECTED") return null;
+  const matches = after.columns.filter(row => `${row.schema_name}.${row.table_name}.${row.name}` === change.key);
+  if (matches.length !== 1) return null;
+  const row = matches[0];
+  if (!scalarTypes.has(row.type) || row.not_null !== false || row.default_expr !== null || row.identity !== "" || row.generated !== "") return null;
+  return `ALTER TABLE ${quote(row.schema_name)}.${quote(row.table_name)} ADD COLUMN ${quote(row.name)} ${row.type};`;
+}
+
 export function planMigration(before, after) {
   if (before?.version !== 1 || after?.version !== 1) throw new Error("Expected target state version 1");
   if ((before.schema === null) !== (after.schema === null)) throw new Error("Both states must use the same schema coverage");
   const permissions = diffPermissions(before.permissions, after.permissions);
   const structure = before.schema === null ? [] :
-    compareSchemaCatalog(normalizeSchemaCatalog(before.schema), normalizeSchemaCatalog(after.schema)).differences;
+    compareSchemaCatalog(normalizeSchemaCatalog(canonical(before.schema)), normalizeSchemaCatalog(canonical(after.schema)))
+      .differences.map(change => ({ ...change, sql: renderStructure(change, after.schema) }));
   const changes = permissions.map(change => ({ ...change, sql: render(change) }));
-  const manual = structure.length > 0 || changes.some(change => !change.sql);
-  const digest = checksumText(JSON.stringify(canonical({ changes, structure })));
+  const manual = [...structure, ...changes].some(change => !change.sql);
+  const digest = checksumText(JSON.stringify(canonical({ changes, structure, schemaBefore: before.schema, schemaAfter: after.schema })));
   return { changes, structure, manual, digest };
 }
 
@@ -86,5 +98,5 @@ export function generateMigrationSql(before, after, review) {
   const plan = planMigration(before, after);
   assertMigrationReview(plan, review);
   if (plan.manual) throw new Error("Plan contains changes requiring explicit SQL");
-  return plan.changes.map(change => change.sql).join("\n");
+  return [...plan.structure, ...plan.changes].map(change => change.sql).join("\n");
 }

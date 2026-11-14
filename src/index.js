@@ -17,3 +17,4 @@ export { inspectConcurrentIndex, recoverInvalidConcurrentIndex } from "./index-r
 export { preflightMigrationCapabilities } from "./capability.js";
 export { diffPermissions, planMigration, assertMigrationReview, generateMigrationSql } from "./migration-plan.js";
 export { createMigration } from "./create-migration.js";
+export { readTargetState, guardMigration } from "./guarded-plan.js";

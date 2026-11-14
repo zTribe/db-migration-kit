@@ -100,3 +100,17 @@ to write the next forward migration without overwriting an existing file.
 Simple schema, table and sequence ACLs and table RLS flags can be rendered.
 Plans with unsupported changes require explicit SQL. Plan and generate
 operate offline and perform no database writes.
+
+A guarded migration uses `guard: { "version": "...", "before": "before.json" }`
+in the shared config. Capture comparable live states using
+`readTargetState(client, schemas)`. The Runner checks the reviewed SQL,
+compares live state with the before snapshot, and checks the resulting
+catalog before inserting the ledger row in the same transaction. The
+generated DDL subset includes adding nullable columns of supported built-in
+types without defaults. Install independent review for changes to the
+config, SQL, and review file using repository protections.
+
+A guard names one transactional migration. Unguarded historical migrations
+continue through the existing Runner path. Use comparable PostgreSQL
+instances and schema coverage because raw role and ACL state includes
+environment-specific entries.

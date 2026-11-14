@@ -97,8 +97,10 @@ export async function applyMigrations(pool, options) {
     const byVersion = new Set(rows.map(row => row.version));
     for (const migration of migrations) {
       if (byVersion.has(migration.version)) continue;
+      const guard = config.migrationGuard?.version === migration.version ? config.migrationGuard : undefined;
       const nonTransactional = /^--[ \t]*migrate:non-transactional(?:-index)?[ \t]*$/mi.test(migration.sql);
       if (nonTransactional) {
+        if (guard) throw new Error("Guarded migrations must be transactional");
         if (config.allowNonTransactional !== true) throw new Error(`non-transactional migration ${migration.version} requires explicit allowNonTransactional=true; partial execution cannot be rolled back`);
         if (config.capabilityPreflight !== false) await preflightMigrationCapabilities(client, migration.sql);
         if (typeof config.beforeMigration === "function") await config.beforeMigration(client, migration, config);
@@ -112,7 +114,9 @@ export async function applyMigrations(pool, options) {
         try {
           if (config.capabilityPreflight !== false) await preflightMigrationCapabilities(client, migration.sql);
           if (typeof config.beforeMigration === "function") await config.beforeMigration(client, migration, config);
+          if (guard) await guard.before(client, migration);
           await client.query(migration.sql);
+          if (guard) await guard.after(client);
           await client.query(
             `INSERT INTO ${qualifiedName(config.schema, config.ledgerTable)} (version,name,checksum,source) VALUES ($1,$2,$3,'migration')`,
             [migration.version, migration.name, migration.checksum],

@@ -1,3 +1,5 @@
+import { generateMigrationSql } from "./migration-plan.js";
+import { guardMigration } from "./guarded-plan.js";
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { loadManifest } from "./checksum.js";
@@ -26,6 +28,24 @@ export async function loadMigrationConfig(path) {
     if (config.files !== undefined) throw new Error("Specify files or discovery");
     config.files = files;
   }
-  await loadManifest(config);
+  const manifest = await loadManifest(config);
+  if (config.guard !== undefined) {
+    const { version, before } = config.guard ?? {};
+    if (!manifest.some(entry => entry.version === version) || typeof before !== "string" || !before.trim() ||
+        !config.targetState || !config.review) throw new Error("Invalid guard configuration");
+    const readJson = async file => JSON.parse(await readFile(file, "utf8"));
+    const oldState = await readJson(resolve(root, before));
+    const target = await readJson(config.targetState);
+    const review = await readJson(config.review);
+    const sql = generateMigrationSql(oldState, target, review);
+    const guard = guardMigration(version, oldState, target, review);
+    config.migrationGuard = {
+      ...guard,
+      async before(client, migration) {
+        if (migration.sql.trim() !== sql.trim()) throw new Error("Migration SQL differs from reviewed plan");
+        await guard.before(client);
+      },
+    };
+  }
   return config;
 }

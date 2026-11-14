@@ -1,5 +1,5 @@
 export type MigrationEntry = string | { file: string; version: string };
-export type MigrationConfig = { directory: string; files: MigrationEntry[]; schema?: string; ledgerTable?: string; lockName?: string; lockWaitMs?: number; lockPollMs?: number; legacyBaselineChecksums?: Record<string,{ledgerChecksum:string;sqlChecksum:string}>; beforeMigrations?: (client: any, config: any) => Promise<void>; verifyTarget?: (client: any, config: any) => Promise<void>; verifyBaseline?: (client: any, input: any) => Promise<boolean>; baselineThrough?: string; allowNonTransactional?: boolean; ledgerSecurity?: { auditRole?: string; clientRoles?: string[] }; autoBaseline?: { through: string; schemas: string[]; expectedCatalog: any }; capabilityPreflight?: boolean; beforeMigration?: (client: any, migration: {version:string;name:string;file:string;sql:string;checksum:string}, config: any) => Promise<void> };
+export type MigrationConfig = { directory: string; files: MigrationEntry[]; migrationGuard?: ReturnType<typeof guardMigration>; schema?: string; ledgerTable?: string; lockName?: string; lockWaitMs?: number; lockPollMs?: number; legacyBaselineChecksums?: Record<string,{ledgerChecksum:string;sqlChecksum:string}>; beforeMigrations?: (client: any, config: any) => Promise<void>; verifyTarget?: (client: any, config: any) => Promise<void>; verifyBaseline?: (client: any, input: any) => Promise<boolean>; baselineThrough?: string; allowNonTransactional?: boolean; ledgerSecurity?: { auditRole?: string; clientRoles?: string[] }; autoBaseline?: { through: string; schemas: string[]; expectedCatalog: any }; capabilityPreflight?: boolean; beforeMigration?: (client: any, migration: {version:string;name:string;file:string;sql:string;checksum:string}, config: any) => Promise<void> };
 export function checksumText(sql: string): string;
 export function loadManifest(config: MigrationConfig): Promise<Array<{version:string;name:string;file:string;sql:string;checksum:string}>>;
 export function inspectMigrations(pool: any, config: MigrationConfig): Promise<any>;
@@ -43,3 +43,9 @@ export function planMigration(before: TargetState, after: TargetState): Migratio
 export function assertMigrationReview(plan: MigrationPlan, review?: MigrationReview): void;
 export function generateMigrationSql(before: TargetState, after: TargetState, review?: MigrationReview): string;
 export function createMigration(config: Awaited<ReturnType<typeof loadMigrationConfig>>, name: string, sql: string, now?: Date): Promise<string>;
+export function readTargetState(client: any, schemas: string[], includeStructure?: boolean): Promise<TargetState>;
+export function guardMigration(version: string, before: TargetState, after: TargetState, review: MigrationReview): {
+  version: string;
+  before(client: any, migration?: { sql: string }): Promise<void>;
+  after(client: any): Promise<void>;
+};
