@@ -33,7 +33,7 @@ export function preflightMigrationCapabilities(client: any, sql: string): Promis
 export type StateRow = Record<string, unknown>;
 export type PermissionState = Record<"schemas" | "objects" | "columnPrivileges" | "functions" | "policies" | "roles" | "memberships", StateRow[]> & Partial<Record<"databasePrivileges" | "defaultPrivileges", StateRow[]>>;
 export type SchemaState = Record<"tables" | "columns" | "constraints" | "indexes" | "triggers" | "functions" | "policies" | "publications", StateRow[]>;
-export type TargetState = { version: 1; schema: SchemaState | null; permissions: PermissionState };
+export type TargetState = { version: 1; schema: SchemaState | null; permissions: PermissionState; migrationRole?: "@migration-role" };
 export type PermissionChange = { section: keyof PermissionState; identity: string[]; previous: StateRow | null; desired: StateRow | null };
 export type MigrationPlan = { changes: (PermissionChange & { sql: string | null })[]; structure: unknown[]; manual: boolean; digest: string };
 export type MigrationReview = { digest: string; reason: string };
@@ -56,3 +56,4 @@ export function resolveUpgradePrefix(config: MigrationConfig, base: string, repo
 export function restoreUpgradeRoles(client: any, base: string, repository: string, names: string[]): Promise<void>;
 export function compareUpgradeAcl(client: any, base: string, repository: string): Promise<string[]>;
 export function restoreUpgradeAcl(client: any, base: string, repository: string): Promise<void>;
+export function normalizeMigrationRole(state: TargetState, role: string): TargetState;

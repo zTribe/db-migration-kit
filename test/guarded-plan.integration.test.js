@@ -73,3 +73,27 @@ test("config → generated migration → rollback on unauthorized privilege → 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("review accepts an equivalent migration role under a different login name", {
+  skip: !process.env.PG_TEST_URL,
+}, async () => {
+  const { normalizeMigrationRole } = await import("../src/index.js");
+  const client = new pg.Client({ connectionString: process.env.PG_TEST_URL });
+  await client.connect();
+  try {
+    await client.query(`BEGIN;
+      CREATE ROLE kit_snapshot_login LOGIN;
+      CREATE SCHEMA kit_role_probe AUTHORIZATION kit_snapshot_login;
+      SET ROLE kit_snapshot_login;
+      CREATE TABLE kit_role_probe.messages (id integer)`);
+    const before = normalizeMigrationRole(await readTargetState(client, ["kit_role_probe"]), "kit_snapshot_login");
+    await client.query("RESET ROLE; ALTER ROLE kit_snapshot_login RENAME TO kit_deploy_login; SET ROLE kit_deploy_login");
+    const guard = guardMigration("role_portability", before, before);
+    await guard.before(client);
+    await client.query("GRANT SELECT ON kit_role_probe.messages TO PUBLIC");
+    await assert.rejects(guard.after(client), /result differs/);
+  } finally {
+    try { await client.query("ROLLBACK"); }
+    finally { await client.end(); }
+  }
+});
