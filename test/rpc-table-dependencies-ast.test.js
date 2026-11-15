@@ -62,3 +62,16 @@ test("PostgreSQL lexer exposes assignment delimiters without string-literal conf
  assert.equal(operators.length,2);
  assert.ok(operators.every(t=>Number.isInteger(t.end)));
 });
+
+test("AST: PLpgSQL assignments with SQL expressions are parsed by lexer and SQL AST",async()=>{
+ const fn=pl("test_fn","v_now := COALESCE((SELECT id FROM chain.tokens LIMIT 1),0); RETURN v_now;");
+ const r=await run([fn],["chain.tokens"]);
+ assert.deepEqual(r.results[0].actualTables,["chain.tokens"]);
+ assert.deepEqual(r.results[0].warnings,[]);
+ assert.equal(r.releaseApproved,false);
+});
+test("AST: PLpgSQL assignment targets with array subscripts stay parser-driven",async()=>{
+ const fn={schema_name:"api",name:"test_fn",definition:"CREATE FUNCTION api.test_fn() RETURNS integer LANGUAGE plpgsql AS $$ DECLARE arr integer[]; BEGIN arr[1] := 7; RETURN arr[1]; END; $$"};
+ const r=await run([fn],[]);
+ assert.deepEqual(r.results[0].warnings,[]);
+});
