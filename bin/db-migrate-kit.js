@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFile, writeFile, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
-import { readTargetState, checksumText, createMigration, loadMigrationConfig, planMigration, assertMigrationReview, generateMigrationSql, applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget, planDependencyImpact, assertDependencyImpactReviewed } from "../src/index.js";
+import { readTargetState, checksumText, createMigration, loadMigrationConfig, planMigration, assertMigrationReview, generateMigrationSql, applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget, planDependencyImpact, planDependencyImpactAst, assertDependencyImpactReviewed } from "../src/index.js";
 
 const [command = "status", ...args] = process.argv.slice(2);
 const configPath = resolve(process.cwd(), args.find(arg => arg.startsWith("--config="))?.slice(9) ?? "migration-kit.config.json");
@@ -22,7 +22,9 @@ if (command === "impact") {
     ? planMigration(await readJson(resolve(process.cwd(),fromPath)), await readJson(resolve(process.cwd(),toPath)))
     : undefined;
   const sql = sqlPath ? await readFile(resolve(process.cwd(),sqlPath),"utf8") : undefined;
-  const report = planDependencyImpact({rules,plan,sql});
+  const report = args.includes("--ast")
+    ? await planDependencyImpactAst({rules,plan,sql})
+    : planDependencyImpact({rules,plan,sql});
   const outputPath = args.find(arg => arg.startsWith("--out="))?.slice(6);
   if (outputPath) await writeFile(resolve(process.cwd(),outputPath),JSON.stringify(report,null,2)+"\n");
   console.log(JSON.stringify(report,null,2));

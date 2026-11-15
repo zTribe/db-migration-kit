@@ -1,4 +1,5 @@
 import { checksumText } from "./checksum.js";
+import { analyzeMigrationSqlAst } from "./migration-sql-ast.js";
 
 /**
  * Generic migration dependency impact planner.
@@ -84,6 +85,27 @@ export function planDependencyImpact(input) {
     touches};
   return {...report,digest:checksumText(JSON.stringify(report))};
 }
+/**
+ * Opt-in parser-backed migration impact report. Always preserve the exact
+ * review digest and do not fall back to regex after AST parser failure.
+ */
+export async function planDependencyImpactAst(input) {
+  validateRules(input?.rules);
+  if (typeof input.sql !== "string") throw new Error("AST impact requires SQL");
+  const ast = await analyzeMigrationSqlAst(input.sql);
+  const touches = [...extractPlanTouches(input.plan), ...ast.touches];
+  const affected = input.rules.flatMap(rule => {
+    const reasons = touches.filter(touch => rule.sources.some(source => matches(source, touch)));
+    return reasons.length ? [{id:rule.id,kind:rule.kind,
+      action:rule.kind === "cache" ? "review-cache-compatibility" : "review-security-semantics",
+      evidence:reasons}] : [];
+  });
+  const report={version:2,analysis:"postgresql-ast",affected,uncertain:ast.uncertain,
+    warnings:ast.warnings,requiresReview:ast.uncertain||affected.length>0,touches,
+    releaseApproved:false,parserFamily:ast.parserFamily};
+  return {...report,digest:checksumText(JSON.stringify(report))};
+}
+
 export function assertDependencyImpactReviewed(report, review) {
   if (!report?.requiresReview) return;
   if (!review || review.digest !== report.digest ||
