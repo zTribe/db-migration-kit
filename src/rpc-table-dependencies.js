@@ -26,7 +26,7 @@ function directReferences(fn){
   if(/\bEXECUTE\b|\bformat\s*\(|\bquote_ident\s*\(/i.test(body)) warnings.push("dynamic-sql-or-identifier");
   const sql=stripLiterals(body);
   // Named relation references in common DML forms, including subqueries and JOINs.
-  const relation=/\b(?:FROM|JOIN|UPDATE|INTO|TRUNCATE(?:\s+TABLE)?)\s+(?:ONLY\s+)?((?:"?[a-z_][\w]*"?)(?:\s*\.\s*"?[a-z_][\w]*"?)?)/gi;
+  const relation=/\b(?:FROM|JOIN|UPDATE(?!\s+SET\b)|INSERT\s+INTO|DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?)\s+(?:ONLY\s+)?((?:"?[a-z_][\w]*"?)(?:\s*\.\s*"?[a-z_][\w]*"?)?)/gi;
   for(const match of sql.matchAll(relation)){
     const end=match.index+match[0].length;
     const name=match[1].replaceAll('"',"").replace(/\s+/g,"").toLowerCase();
