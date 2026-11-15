@@ -23,6 +23,7 @@ test("AST: EXTRACT(epoch FROM variable) never becomes a relation",async()=>{
 test("AST: PLpgSQL UPSERT RETURNING INTO does not fabricate dependencies",async()=>{
  const fn=pl("test_fn","INSERT INTO app.buckets (id) VALUES (1) ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id RETURNING id INTO v_now; RETURN v_now;");
  const r=await run([fn],["app.buckets"]);
+ console.log("AST_DIAGNOSTIC",JSON.stringify(r.results[0]));
  assert.deepEqual(r.results[0].missing,[]);
  assert.equal(r.results[0].actualTables.includes("app.buckets"),true);
 });
