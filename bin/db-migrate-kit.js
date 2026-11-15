@@ -8,6 +8,23 @@ const configPath = resolve(process.cwd(), args.find(arg => arg.startsWith("--con
 const config = await loadMigrationConfig(configPath);
 const readJson = async path => JSON.parse(await readFile(path, "utf8"));
 
+if (command === "scan-history") {
+  const { scanMigrationHistoryAst } = await import("../src/migration-history-ast.js");
+  const changedPath = args.find(arg => arg.startsWith("--changed-files="))?.slice(16);
+  const changedFiles = changedPath
+    ? (await readFile(resolve(process.cwd(),changedPath),"utf8")).split(/\r?\n/).map(x=>x.trim()).filter(Boolean)
+    : [];
+  const report = await scanMigrationHistoryAst(config,{changedFiles});
+  const output = args.find(arg => arg.startsWith("--out="))?.slice(6);
+  if (output) await writeFile(resolve(process.cwd(),output),JSON.stringify(report,null,2)+"\n");
+  console.log(JSON.stringify({summary:report.summary,releaseApproved:false,
+    report:output ?? null,warnings:report.warnings},null,2));
+  // Parse errors on changed migrations require review and authoritative PG17
+  // replay. Do not block valid PG17 SQL because a PG18 parser disagrees.
+  if (args.includes("--fail-on-parse-error") && report.summary.parseErrors > 0) process.exitCode=1;
+  process.exit();
+}
+
 if (command === "impact") {
   const rulesPath = args.find(arg => arg.startsWith("--rules="))?.slice(8);
   const sqlPath = args.find(arg => arg.startsWith("--sql="))?.slice(6);
