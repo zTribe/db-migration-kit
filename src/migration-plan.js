@@ -68,12 +68,12 @@ function render(change) {
 
 const scalarTypes = new Set(["integer", "bigint", "text", "boolean", "uuid", "jsonb", "timestamp with time zone"]);
 
-function renderStructure(change, after) {
+function renderStructure(change, after, supportsSmallint = false) {
   if (change.section !== "columns" || change.code !== "UNEXPECTED") return null;
   const matches = after.columns.filter(row => `${row.schema_name}.${row.table_name}.${row.name}` === change.key);
   if (matches.length !== 1) return null;
   const row = matches[0];
-  if (!scalarTypes.has(row.type) || row.not_null !== false || row.default_expr !== null || row.identity !== "" || row.generated !== "") return null;
+  if (!(scalarTypes.has(row.type) || (supportsSmallint && row.type === "smallint")) || row.not_null !== false || row.default_expr !== null || row.identity !== "" || row.generated !== "") return null;
   return `ALTER TABLE ${quote(row.schema_name)}.${quote(row.table_name)} ADD COLUMN ${quote(row.name)} ${row.type};`;
 }
 
@@ -85,9 +85,12 @@ export function planMigration(before, after) {
     compareSchemaCatalog(normalizeSchemaCatalog(canonical(before.schema)), normalizeSchemaCatalog(canonical(after.schema)))
       .differences.map(change => ({ ...change, sql: renderStructure(change, after.schema) }));
   const changes = permissions.map(change => ({ ...change, sql: render(change) }));
-  const manual = [...structure, ...changes].some(change => !change.sql);
+  // Keep existing review digests valid when a previously manual change becomes generatable.
   const digest = checksumText(JSON.stringify(canonical({ changes, structure, schemaBefore: before.schema, schemaAfter: after.schema })));
-  return { changes, structure, manual, digest };
+  const generatedStructure = structure.map(change => change.sql || change.section !== "columns"
+    ? change : { ...change, sql: renderStructure(change, after.schema, true) });
+  const manual = [...generatedStructure, ...changes].some(change => !change.sql);
+  return { changes, structure: generatedStructure, manual, digest };
 }
 
 export function assertMigrationReview(plan, review) {
@@ -100,6 +103,25 @@ export function assertMigrationReview(plan, review) {
 export function generateMigrationSql(before, after, review) {
   const plan = planMigration(before, after);
   assertMigrationReview(plan, review);
-  if (plan.manual) throw new Error("Plan contains changes requiring explicit SQL");
+  if (plan.manual) {
+    const entries = [...plan.structure, ...plan.changes];
+    const manual = entries.filter(change => !change.sql);
+    const details = manual.map(change => {
+      const name = change.key ?? (change.section === "functions"
+        ? `${change.identity[0]}.${change.identity[1]}(${change.identity[2]})`
+        : change.identity.join("."));
+      const reason = change.code
+        ? change.section === "columns" && change.code === "UNEXPECTED"
+          ? "only nullable scalar columns without defaults, identity or generated expressions are supported"
+          : `${change.code.toLowerCase()} catalog entries in this section require manual DDL`
+        : "automatic SQL is unavailable for this permission or object change";
+      return `- ${change.section}: ${JSON.stringify(name)} (${reason})`;
+    });
+    throw new Error([
+      `Plan contains ${manual.length} ${manual.length === 1 ? "change" : "changes"} requiring explicit SQL (${entries.length - manual.length} can be generated).`,
+      ...details,
+      "Use plan to inspect the full diff and include the manual changes in the reviewed migration.",
+    ].join("\n"));
+  }
   return [...plan.structure, ...plan.changes].map(change => change.sql).join("\n");
 }

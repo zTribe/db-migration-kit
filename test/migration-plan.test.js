@@ -21,5 +21,5 @@ test("permission changes require review of the exact plan before SQL generation"
   after.permissions.memberships.push({ member: "reader", parent: "postgres" });
   assert.throws(() => generateMigrationSql(before, after, {
     digest: planMigration(before, after).digest, reason: "Review role change",
-  }), /explicit SQL/);
+  }), /1 change requiring explicit SQL \(2 can be generated\)[\s\S]*memberships: "reader.postgres"/);
 });
