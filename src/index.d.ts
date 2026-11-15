@@ -63,3 +63,6 @@ export function planDependencyImpact(input:{rules:DependencyRule[];plan?:Migrati
 export function assertDependencyImpactReviewed(report:DependencyImpactReport,review?:{digest:string;reason:string;decisions:Array<{id:string;action:"compatible"|"update-cache"|"disable-cache"|"versioned-rollout";reason:string}>}):void;
 
 export declare function verifyMigrationContracts(configPath: string, contracts: Array<{ version: string; required?: RegExp[]; forbidden?: RegExp[] }>): Promise<Array<{ version: string; checked: number }>>;
+
+export type RpcContractAudit = { changes: Array<{id:string; status:"review-required"|"signature-compatible"; reason:string; incompatibleFields?:string[]}>; requiresReview:boolean; releaseApproved:false; dependencyGraphComplete:false; warnings:string[] };
+export function compareRpcCatalogContracts(before:Pick<SchemaState,"functions">,after:Pick<SchemaState,"functions">,identities:string[]):RpcContractAudit;
