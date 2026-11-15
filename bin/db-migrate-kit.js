@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFile, writeFile, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
-import { readTargetState, checksumText, createMigration, loadMigrationConfig, planMigration, assertMigrationReview, generateMigrationSql, applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget, planDependencyImpact, assertDependencyImpactReviewed } from "../src/index.js";
+import { readTargetState, checksumText, createMigration, loadMigrationConfig, planMigration, assertMigrationReview, generateMigrationSql, applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget, planDependencyImpact, planDependencyImpactAst, assertDependencyImpactReviewed } from "../src/index.js";
 
 const [command = "status", ...args] = process.argv.slice(2);
 if (command === "prepare") {
@@ -11,6 +11,23 @@ if (command === "prepare") {
 const configPath = resolve(process.cwd(), args.find(arg => arg.startsWith("--config="))?.slice(9) ?? "migration-kit.config.json");
 const config = await loadMigrationConfig(configPath);
 const readJson = async path => JSON.parse(await readFile(path, "utf8"));
+
+if (command === "scan-history") {
+  const { scanMigrationHistoryAst } = await import("../src/migration-history-ast.js");
+  const changedPath = args.find(arg => arg.startsWith("--changed-files="))?.slice(16);
+  const changedFiles = changedPath
+    ? (await readFile(resolve(process.cwd(),changedPath),"utf8")).split(/\r?\n/).map(x=>x.trim()).filter(Boolean)
+    : [];
+  const report = await scanMigrationHistoryAst(config,{changedFiles});
+  const output = args.find(arg => arg.startsWith("--out="))?.slice(6);
+  if (output) await writeFile(resolve(process.cwd(),output),JSON.stringify(report,null,2)+"\n");
+  console.log(JSON.stringify({summary:report.summary,releaseApproved:false,
+    report:output ?? null,warnings:report.warnings},null,2));
+  // Parse errors on changed migrations require review and authoritative PG17
+  // replay. Do not block valid PG17 SQL because a PG18 parser disagrees.
+  if (args.includes("--fail-on-parse-error") && report.summary.parseErrors > 0) process.exitCode=1;
+  process.exit();
+}
 
 if (command === "impact") {
   const rulesPath = args.find(arg => arg.startsWith("--rules="))?.slice(8);
@@ -26,7 +43,9 @@ if (command === "impact") {
     ? planMigration(await readJson(resolve(process.cwd(),fromPath)), await readJson(resolve(process.cwd(),toPath)))
     : undefined;
   const sql = sqlPath ? await readFile(resolve(process.cwd(),sqlPath),"utf8") : undefined;
-  const report = planDependencyImpact({rules,plan,sql});
+  const report = args.includes("--ast")
+    ? await planDependencyImpactAst({rules,plan,sql})
+    : planDependencyImpact({rules,plan,sql});
   const outputPath = args.find(arg => arg.startsWith("--out="))?.slice(6);
   if (outputPath) await writeFile(resolve(process.cwd(),outputPath),JSON.stringify(report,null,2)+"\n");
   console.log(JSON.stringify(report,null,2));

@@ -63,3 +63,14 @@ export function planDependencyImpact(input:{rules:DependencyRule[];plan?:Migrati
 export function assertDependencyImpactReviewed(report:DependencyImpactReport,review?:{digest:string;reason:string;decisions:Array<{id:string;action:"compatible"|"update-cache"|"disable-cache"|"versioned-rollout";reason:string}>}):void;
 
 export declare function verifyMigrationContracts(configPath: string, contracts: Array<{ version: string; required?: RegExp[]; forbidden?: RegExp[] }>): Promise<Array<{ version: string; checked: number }>>;
+
+export type RpcContractAudit = { changes: Array<{id:string; status:"review-required"|"signature-compatible"; reason:string; incompatibleFields?:string[]}>; requiresReview:boolean; releaseApproved:false; dependencyGraphComplete:false; warnings:string[] };
+export function compareRpcCatalogContracts(before:Pick<SchemaState,"functions">,after:Pick<SchemaState,"functions">,identities:string[]):RpcContractAudit;
+
+export type RpcTableDependencyContract = {id:string;tables:string[]};
+export type RpcTableDependencyAudit = {results:Array<{id:string;actualTables?:string[];missing:string[];stale:string[];warnings:string[];requiresReview:boolean}>;requiresReview:boolean;releaseApproved:false;dependencyGraphComplete:false;warnings:string[]};
+export function auditRpcTableDependencies(snapshot:Pick<SchemaState,"functions">,contracts:RpcTableDependencyContract[]):RpcTableDependencyAudit;
+
+/** AST parser using libpg-query PostgreSQL 18 grammar against PG17 catalog: review-only. */
+export type RpcAstDependencyAudit = RpcTableDependencyAudit & { parserFamily:string; parserMajor:18; targetPostgresMajor:17 };
+export function auditRpcTableDependenciesAst(snapshot:Pick<SchemaState,"functions">,contracts:RpcTableDependencyContract[]):Promise<RpcAstDependencyAudit>;
