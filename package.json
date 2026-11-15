@@ -42,5 +42,8 @@
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
+  },
+  "dependencies": {
+    "libpg-query": "18.2.4"
   }
 }
