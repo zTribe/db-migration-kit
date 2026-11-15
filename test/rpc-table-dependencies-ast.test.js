@@ -47,3 +47,9 @@ test("AST: invalid input and overload fail closed",async()=>{
  const r=await run([sql("test_fn","SELECT 1"),sql("test_fn","SELECT 2")],[]);
  assert.equal(r.requiresReview,true);
 });
+
+test("AST: PLpgSQL conditional expressions parse with expression mode",async()=>{
+ const fn=pl("test_fn","IF v_now > 0 THEN RETURN v_now; END IF; RETURN 0;");
+ const r=await run([fn],[]);
+ assert.deepEqual(r.results[0].warnings,[]);
+});
