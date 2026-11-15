@@ -9,7 +9,7 @@
  * from the target PG17 server. Even zero warnings cannot prove complete
  * semantic/indirect dependencies (views, triggers, overloaded SQL, search_path).
  */
-import { parse, parsePlPgSQL } from "libpg-query";
+import { parse, parsePlPgSQL, scan } from "libpg-query";
 
 const qualified = x => /^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/i.test(x);
 const norm = x => x.toLowerCase();
@@ -50,12 +50,31 @@ function walkSqlTree(tree,tables,calls,warnings){
   }
 }
 async function parseSql(query,tables,calls,warnings,mode=0){
+  // PostgreSQL's PL/pgSQL AST describes assignments with a parseMode (3-5).
+  // Its SQL parser expects expression mode, not the entire target := value.
+  // Use PostgreSQL's own lexer to isolate the assignment RHS; never
+  // split SQL by keywords, punctuation in string literals, or regexes.
+  if(mode>=3&&mode<=5){
+    try {
+      const tokens=(await scan(query)).tokens;
+      const operator=tokens.find(t=>t.text===":="||t.text==="=");
+      if(!operator||!Number.isInteger(operator.end))throw Error("missing assignment operator");
+      // libpg_query token offsets are UTF8 byte offsets, not JS UTF16 indices.
+      const rhs=Buffer.from(query,"utf8").subarray(operator.end).toString("utf8");
+      if(!rhs.trim())throw Error("empty assignment RHS");
+      query=rhs;
+      mode=2;
+    } catch(e) {
+      warnings.add("unparsed-assignment:"+String(e?.message||e).slice(0,100));
+      return;
+    }
+  }
   let tree;
   try {
     tree=await parse(query);
   } catch(error) {
-    // PL/pgSQL stores expression-mode nodes without their implicit SELECT.
-    // This fallback is still parsed by PostgreSQL, never scanned as text.
+    // PL/pgSQL expression-mode AST nodes omit the implicit SELECT.
+    // Re-parse using the SQL AST, not a handwritten grammar.
     if(mode===2) {
       try { tree=await parse("SELECT "+query); }
       catch(e) { warnings.add("unparsed-expression:"+String(e?.message||e).slice(0,100)); return; }
@@ -83,7 +102,6 @@ async function walkPlpgsql(tree,tables,calls,warnings){
     return;
   }
   for(const [key,value] of Object.entries(tree)){
-    if(key==="datums")continue;
     await walkPlpgsql(value,tables,calls,warnings);
   }
 }
