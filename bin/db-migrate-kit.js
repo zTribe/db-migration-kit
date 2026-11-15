@@ -4,6 +4,10 @@ import { resolve } from "node:path";
 import { readTargetState, checksumText, createMigration, loadMigrationConfig, planMigration, assertMigrationReview, generateMigrationSql, applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget, planDependencyImpact, assertDependencyImpactReviewed } from "../src/index.js";
 
 const [command = "status", ...args] = process.argv.slice(2);
+if (command === "prepare") {
+  await import("./test-local.js");
+  process.exit(0);
+}
 const configPath = resolve(process.cwd(), args.find(arg => arg.startsWith("--config="))?.slice(9) ?? "migration-kit.config.json");
 const config = await loadMigrationConfig(configPath);
 const readJson = async path => JSON.parse(await readFile(path, "utf8"));

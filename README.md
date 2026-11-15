@@ -18,7 +18,7 @@ MIGRATION_DATABASE_URL="$DATABASE_URL" node packages/db-migration-kit/bin/db-mig
 MIGRATION_DATABASE_URL="$DATABASE_URL" node packages/db-migration-kit/bin/db-migrate-kit.js audit --config=packages/db-migration-kit/examples/chat.migration-kit.config.json
 ```
 
-The Chat manifest is included as a ready-to-use config, but the CLI is not yet installed in the separate Chat repository because this package is currently hosted in the private Indexer repository.
+Both Chat and Indexer consume the shared Kit. Use the migration config in the service checkout when operating on that service.
 
 Apply requires explicit confirmation. Local PostgreSQL:
 ```bash
@@ -31,6 +31,30 @@ MIGRATION_DATABASE_URL="$DEV_DATABASE_URL" node packages/db-migration-kit/bin/db
 ```
 
 Do not run local tests or CLI apply against Production. `status` and `audit` are read-only; `audit` wraps its catalog/ledger read in a PostgreSQL read-only transaction.
+
+## Prepare a migration from candidate SQL
+
+From a Chat or Indexer checkout with the Kit upgrade fixture wired for candidate
+capture, put the proposed SQL outside `db/migrations/`. Install dependencies
+and build Indexer before preparing its migration.
+
+```bash
+npx --no-install db-migrate-kit prepare chat HEAD ./candidate.sql add_vote_state "Reviewed schema and permissions for vote state"
+npx --no-install db-migrate-kit prepare indexer HEAD ./candidate.sql add_vote_state "Reviewed schema and permissions for vote state"
+```
+
+Use the target branch's pre-change commit in place of `HEAD` when preparing a
+merge. Its migration directory must match the checkout's existing SQL exactly.
+Pass a review reason that describes the intended change.
+
+The command builds the baseline in an isolated Docker PostgreSQL 17, tries the
+candidate as the consumer's non-superuser migration role, and captures the
+before/after catalogs. It writes one versioned SQL file and its checksum-bound
+review sidecar, then replays the upgrade with the normal service runner on a
+fresh container. A failed replay removes the two generated files. The command
+requires a catalog change and SQL that runs inside a Kit-managed transaction.
+Review the resulting diff and run the service's applicable checks before
+committing, including Indexer's `npm run test:db-security` for permission changes.
 
 ## Library capabilities
 
