@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { auditRpcTableDependenciesAst as audit } from "../src/rpc-table-dependencies-ast.js";
+import {parsePlPgSQL} from "libpg-query";
 const sql=(name,body)=>({schema_name:"api",name,definition:"CREATE FUNCTION api."+name+"() RETURNS integer LANGUAGE sql AS $body$"+body+"$body$"});
 const pl=(name,body)=>({schema_name:"api",name,definition:"CREATE FUNCTION api."+name+"() RETURNS integer LANGUAGE plpgsql AS $body$DECLARE v_now integer; BEGIN "+body+" END; $body$"});
 const run=(functions,tables,id="api.test_fn")=>audit({functions},[{id,tables}]);
@@ -24,6 +25,7 @@ test("AST: PLpgSQL UPSERT RETURNING INTO does not fabricate dependencies",async(
  const fn=pl("test_fn","INSERT INTO app.buckets (id) VALUES (1) ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id RETURNING id INTO v_now; RETURN v_now;");
  const r=await run([fn],["app.buckets"]);
  console.log("AST_DIAGNOSTIC",JSON.stringify(r.results[0]));
+ console.log("AST_SHAPE",JSON.stringify(await parsePlPgSQL(fn.definition)).slice(0,3500));
  assert.deepEqual(r.results[0].missing,[]);
  assert.equal(r.results[0].actualTables.includes("app.buckets"),true);
 });
