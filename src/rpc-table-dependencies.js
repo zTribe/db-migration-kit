@@ -24,7 +24,10 @@ function directReferences(fn){
   const body=bodyOf(fn.definition||"");
   if(body===null)return {tables:[],calls:[],warnings:["unsupported-function-body"]};
   if(/\bEXECUTE\b|\bformat\s*\(|\bquote_ident\s*\(/i.test(body)) warnings.push("dynamic-sql-or-identifier");
-  const sql=stripLiterals(body);
+  // PostgreSQL EXTRACT(field FROM expression) uses FROM as a keyword but
+  // has no relation operand. Mask these clauses before lexical relation scan.
+  // Complex expressions not recognized here remain subject to manual review.
+  const sql=stripLiterals(body).replace(/\bEXTRACT\s*\(\s*[a-z_][\w]*\s+FROM\s+[a-z_][\w]*\s*\)/gi,"EXTRACT_VALUE");
   // Named relation references in common DML forms, including subqueries and JOINs.
   const relation=/\b(?:FROM|JOIN|UPDATE(?!\s+SET\b)|INSERT\s+INTO|DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?)\s+(?:ONLY\s+)?((?:"?[a-z_][\w]*"?)(?:\s*\.\s*"?[a-z_][\w]*"?)?)/gi;
   for(const match of sql.matchAll(relation)){
