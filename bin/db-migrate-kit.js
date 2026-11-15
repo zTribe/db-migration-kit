@@ -1,12 +1,40 @@
 #!/usr/bin/env node
 import { readFile, writeFile, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
-import { readTargetState, checksumText, createMigration, loadMigrationConfig, planMigration, assertMigrationReview, generateMigrationSql, applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget } from "../src/index.js";
+import { readTargetState, checksumText, createMigration, loadMigrationConfig, planMigration, assertMigrationReview, generateMigrationSql, applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget, planDependencyImpact, assertDependencyImpactReviewed } from "../src/index.js";
 
 const [command = "status", ...args] = process.argv.slice(2);
 const configPath = resolve(process.cwd(), args.find(arg => arg.startsWith("--config="))?.slice(9) ?? "migration-kit.config.json");
 const config = await loadMigrationConfig(configPath);
 const readJson = async path => JSON.parse(await readFile(path, "utf8"));
+
+if (command === "impact") {
+  const rulesPath = args.find(arg => arg.startsWith("--rules="))?.slice(8);
+  const sqlPath = args.find(arg => arg.startsWith("--sql="))?.slice(6);
+  const fromPath = args.find(arg => arg.startsWith("--from="))?.slice(7);
+  const toPath = args.find(arg => arg.startsWith("--to="))?.slice(5);
+  if (!rulesPath || (!sqlPath && !(fromPath && toPath))) {
+    throw new Error("impact requires --rules=<project-dependencies.json> and --sql=<migration.sql> or --from/--to states");
+  }
+  const manifest = await readJson(resolve(process.cwd(), rulesPath));
+  const rules = Array.isArray(manifest) ? manifest : manifest.rules;
+  const plan = fromPath && toPath
+    ? planMigration(await readJson(resolve(process.cwd(),fromPath)), await readJson(resolve(process.cwd(),toPath)))
+    : undefined;
+  const sql = sqlPath ? await readFile(resolve(process.cwd(),sqlPath),"utf8") : undefined;
+  const report = planDependencyImpact({rules,plan,sql});
+  const outputPath = args.find(arg => arg.startsWith("--out="))?.slice(6);
+  if (outputPath) await writeFile(resolve(process.cwd(),outputPath),JSON.stringify(report,null,2)+"\n");
+  console.log(JSON.stringify(report,null,2));
+  const checkPath = args.find(arg => arg.startsWith("--check="))?.slice(8);
+  if (checkPath) {
+    const review = await readJson(resolve(process.cwd(),checkPath));
+    assertDependencyImpactReviewed(report,review);
+  } else if (args.includes("--require-reviewed") && report.requiresReview) {
+    throw new Error("Migration dependency changes require --check=<review.json>");
+  }
+  process.exit(0);
+}
 
 if (["validate", "plan", "review", "generate"].includes(command)) {
   if (command !== "validate") {
