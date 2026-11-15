@@ -74,3 +74,10 @@ test("PLpgSQL UPSERT, RETURNING INTO and local variables do not fabricate table 
  assert.deepEqual(result.results[0].actualTables,["app.api_rate_limit_buckets"]);
  assert.deepEqual(result.results[0].warnings,[]);
 });
+
+test("EXTRACT(epoch FROM v_now) is not a relation",()=>{
+ const body = "SELECT extract(epoch FROM v_now) INTO v_seconds; DELETE FROM app.api_rate_limit_buckets WHERE bucket_key = 'k';";
+ const report=audit([fn("candles",body)],["app.api_rate_limit_buckets"]);
+ assert.deepEqual(report.results[0].warnings,[]);
+ assert.deepEqual(report.results[0].actualTables,["app.api_rate_limit_buckets"]);
+});
