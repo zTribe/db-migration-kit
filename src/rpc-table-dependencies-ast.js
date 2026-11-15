@@ -49,14 +49,23 @@ function walkSqlTree(tree,tables,calls,warnings){
     walkSqlTree(value,tables,calls,warnings);
   }
 }
-async function parseSql(query,tables,calls,warnings){
-  try{
-    const tree=await parse(query);
-    if(!Array.isArray(tree?.stmts))throw Error("missing statements");
-    walkSqlTree(tree.stmts,tables,calls,warnings);
-  }catch(e){
-    warnings.add("unparsed-sql:"+String(e?.message||e).slice(0,100));
+async function parseSql(query,tables,calls,warnings,mode=0){
+  let tree;
+  try {
+    tree=await parse(query);
+  } catch(error) {
+    // PL/pgSQL stores expression-mode nodes without their implicit SELECT.
+    // This fallback is still parsed by PostgreSQL, never scanned as text.
+    if(mode===2) {
+      try { tree=await parse("SELECT "+query); }
+      catch(e) { warnings.add("unparsed-expression:"+String(e?.message||e).slice(0,100)); return; }
+    } else {
+      warnings.add("unparsed-sql:"+String(error?.message||error).slice(0,100));
+      return;
+    }
   }
+  if(!Array.isArray(tree?.stmts)){warnings.add("missing-parse-tree-statements");return;}
+  walkSqlTree(tree.stmts,tables,calls,warnings);
 }
 /** Walk a parsed PL/pgSQL AST, never treating arbitrary text as SQL. */
 async function walkPlpgsql(tree,tables,calls,warnings){
@@ -64,7 +73,7 @@ async function walkPlpgsql(tree,tables,calls,warnings){
   if(Array.isArray(tree)){for(const x of tree)await walkPlpgsql(x,tables,calls,warnings);return;}
   if(tree.PLpgSQL_expr){
     const expr=tree.PLpgSQL_expr;
-    if(typeof expr.query==="string")await parseSql(expr.query,tables,calls,warnings);
+    if(typeof expr.query==="string")await parseSql(expr.query,tables,calls,warnings,expr.parseMode??0);
     else warnings.add("plpgsql-expression-without-sql");
     return;
   }
