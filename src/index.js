@@ -22,3 +22,4 @@ export { resolveUpgradePrefix, restoreUpgradeRoles, compareUpgradeAcl, restoreUp
 export { normalizeMigrationRole } from "./migration-role.js";
 export { planDependencyImpact, assertDependencyImpactReviewed } from "./dependency-impact.js";
 export { compareRpcCatalogContracts } from "./rpc-contract-audit.js";
+export { auditRpcTableDependencies } from "./rpc-table-dependencies.js";
