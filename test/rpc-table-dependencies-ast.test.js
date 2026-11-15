@@ -53,3 +53,12 @@ test("AST: PLpgSQL conditional expressions parse with expression mode",async()=>
  const r=await run([fn],[]);
  assert.deepEqual(r.results[0].warnings,[]);
 });
+
+test("PostgreSQL lexer exposes assignment delimiters without string-literal confusion",async()=>{
+ const {scan}=await import("libpg-query");
+ const result=await scan("v_count := coalesce(1, 2); v_note := ':=';");
+ assert.ok(Array.isArray(result.tokens));
+ const operators=result.tokens.filter(t=>t.text===":=");
+ assert.equal(operators.length,2);
+ assert.ok(operators.every(t=>Number.isInteger(t.end)));
+});
