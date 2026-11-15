@@ -26,10 +26,16 @@ function readName(parts){
 function walkSqlTree(tree,tables,calls,warnings){
   if(!tree||typeof tree!=="object")return;
   if(Array.isArray(tree)){for(const x of tree)walkSqlTree(x,tables,calls,warnings);return;}
-  if(tree.RangeVar){
-    const r=tree.RangeVar;
-    if(typeof r.schemaname==="string"&&typeof r.relname==="string")tables.add(norm(r.schemaname+"."+r.relname));
-    else warnings.add("unqualified-relation:"+(r.relname??"unknown"));
+  function relation(r){
+    if(!r||typeof r.relname!=="string"){warnings.add("unsupported-relation-node");return;}
+    if(typeof r.schemaname==="string")tables.add(norm(r.schemaname+"."+r.relname));
+    else warnings.add("unqualified-relation:"+r.relname);
+  }
+  if(tree.RangeVar)relation(tree.RangeVar);
+  // libpg_query represents DML targets as bare relation objects, unlike
+  // FROM/JOIN expression nodes wrapped in RangeVar.
+  for(const kind of ["InsertStmt","UpdateStmt","DeleteStmt","MergeStmt"]){
+    if(tree[kind])relation(tree[kind].relation);
   }
   if(tree.FuncCall){
     const fn=readName(tree.FuncCall.funcname);
