@@ -70,3 +70,7 @@ export function compareRpcCatalogContracts(before:Pick<SchemaState,"functions">,
 export type RpcTableDependencyContract = {id:string;tables:string[]};
 export type RpcTableDependencyAudit = {results:Array<{id:string;actualTables?:string[];missing:string[];stale:string[];warnings:string[];requiresReview:boolean}>;requiresReview:boolean;releaseApproved:false;dependencyGraphComplete:false;warnings:string[]};
 export function auditRpcTableDependencies(snapshot:Pick<SchemaState,"functions">,contracts:RpcTableDependencyContract[]):RpcTableDependencyAudit;
+
+/** AST parser using libpg-query PostgreSQL 18 grammar against PG17 catalog: review-only. */
+export type RpcAstDependencyAudit = RpcTableDependencyAudit & { parserFamily:string; parserMajor:18; targetPostgresMajor:17 };
+export function auditRpcTableDependenciesAst(snapshot:Pick<SchemaState,"functions">,contracts:RpcTableDependencyContract[]):Promise<RpcAstDependencyAudit>;
