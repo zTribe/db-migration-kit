@@ -42,6 +42,9 @@ function directReferences(fn){
   // Explicit calls into non-system schemas require transitive analysis.
   const call=/\b([a-z_][\w]*)\.([a-z_][\w]*)\s*\(/gi;
   for(const m of sql.matchAll(call)){
+    // INSERT INTO schema.table(column_list) is a relation plus column list,
+    // not a function call. Keep SQL table-valued functions reviewable.
+    if(/\bINSERT\s+INTO\s*$/i.test(sql.slice(Math.max(0,m.index-40),m.index)))continue;
     const schema=normalize(m[1]);
     if(!["pg_catalog","information_schema"].includes(schema)) calls.push(schema+"."+normalize(m[2]));
   }
