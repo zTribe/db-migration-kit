@@ -57,5 +57,9 @@ export function restoreUpgradeRoles(client: any, base: string, repository: strin
 export function compareUpgradeAcl(client: any, base: string, repository: string): Promise<string[]>;
 export function restoreUpgradeAcl(client: any, base: string, repository: string): Promise<void>;
 export function normalizeMigrationRole(state: TargetState, role: string): TargetState;
+export type DependencyRule = {id:string;kind:"cache"|"security"|"other";sources:Array<{kind:"table"|"column"|"function";name:string}>};
+export type DependencyImpactReport = {version:1;affected:Array<{id:string;kind:string;action:string;evidence:Array<{kind:string;name:string;reason:string}>}>;uncertain:boolean;requiresReview:boolean;touches:Array<{kind:string;name:string;reason:string}>;digest:string};
+export function planDependencyImpact(input:{rules:DependencyRule[];plan?:MigrationPlan;sql?:string}):DependencyImpactReport;
+export function assertDependencyImpactReviewed(report:DependencyImpactReport,review?:{digest:string;reason:string;decisions:Array<{id:string;action:"compatible"|"update-cache"|"disable-cache"|"versioned-rollout";reason:string}>}):void;
 
 export declare function verifyMigrationContracts(configPath: string, contracts: Array<{ version: string; required?: RegExp[]; forbidden?: RegExp[] }>): Promise<Array<{ version: string; checked: number }>>;
