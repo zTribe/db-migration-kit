@@ -32,3 +32,27 @@ export async function captureCandidate(migrator, schemas) {
     finally { client.release(); }
   }
 }
+
+// The fixture runs this after the service's own upgrade assertions.
+export async function verifyCandidateChecks(pool, path) {
+  const sql = await readFile(path, "utf8");
+  assertManagedTransaction(sql, path);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL statement_timeout = '10s'");
+    const result = await client.query(sql);
+    const rows = (Array.isArray(result) ? result.at(-1) : result)?.rows;
+    if (!rows?.length || rows.some(row =>
+      typeof row.check_name !== "string" || !row.check_name.trim() || typeof row.passed !== "boolean"
+    ) || new Set(rows.map(row => row.check_name)).size !== rows.length) {
+      throw new Error("checks.sql must end with unique, nonempty check_name text and passed boolean rows");
+    }
+    const failures = rows.filter(row => !row.passed).map(row => row.check_name);
+    if (failures.length) throw new Error(`Migration assertions failed: ${failures.join(", ")}`);
+    console.log(`Migration assertions passed (${rows.length}): ${rows.map(row => row.check_name).join(", ")}`);
+  } finally {
+    try { await client.query("ROLLBACK"); }
+    finally { client.release(); }
+  }
+}

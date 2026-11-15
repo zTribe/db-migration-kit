@@ -39,8 +39,8 @@ capture, put the proposed SQL outside `db/migrations/`. Install dependencies
 and build Indexer before preparing its migration.
 
 ```bash
-npx --no-install db-migrate-kit prepare chat HEAD ./candidate.sql add_vote_state "Reviewed schema and permissions for vote state"
-npx --no-install db-migrate-kit prepare indexer HEAD ./candidate.sql add_vote_state "Reviewed schema and permissions for vote state"
+npx --no-install db-migrate-kit prepare chat HEAD ./candidate.sql add_vote_state "Reviewed schema and permissions for vote state" ./checks.sql
+npx --no-install db-migrate-kit prepare indexer HEAD ./candidate.sql add_vote_state "Reviewed schema and permissions for vote state" ./checks.sql
 ```
 
 Use the target branch's pre-change commit in place of `HEAD` when preparing a
@@ -51,7 +51,10 @@ The command builds the baseline in an isolated Docker PostgreSQL 17, tries the
 candidate as the consumer's non-superuser migration role, and captures the
 before/after catalogs. It writes one versioned SQL file and its checksum-bound
 review sidecar, then replays the upgrade with the normal service runner on a
-fresh container. A failed replay removes the two generated files. The command
+fresh container. It executes `checks.sql` after the project's upgrade checks,
+inside a rolled-back transaction. The final query must return at least one row
+with a unique `check_name` (text) and `passed` (boolean). Check names with false
+results are reported. A failed replay or assertion removes the two generated files. The command
 requires a catalog change and SQL that runs inside a Kit-managed transaction.
 Review the resulting diff and run the service's applicable checks before
 committing, including Indexer's `npm run test:db-security` for permission changes.

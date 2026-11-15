@@ -7,9 +7,9 @@ import { checksumText, createMigration, loadMigrationConfig, resolveUpgradePrefi
 import { randomUUID } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
 
-const [mode, project, ref = "HEAD", output, migrationName, reason] = process.argv.slice(2);
+const [mode, project, ref = "HEAD", output, migrationName, reason, checksPath] = process.argv.slice(2);
 if (!["upgrade", "full", "snapshot", "prepare"].includes(mode) || !["chat", "indexer"].includes(project)) {
-  throw new Error("Usage: db-migrate-kit-test <upgrade|full|snapshot|prepare> <chat|indexer> [base-ref] [output-or-candidate] [migration-name] [review-reason]");
+  throw new Error("Usage: db-migrate-kit-test <upgrade|full|snapshot|prepare> <chat|indexer> [base-ref] [output-or-candidate] [migration-name] [review-reason] [checks.sql]");
 }
 const base = mode !== "full"
   ? execFileSync("git", ["rev-parse", "--verify", "--end-of-options", ref + "^{commit}"], { encoding: "utf8" }).trim()
@@ -34,7 +34,7 @@ async function runFixture(extraEnv = {}) {
       stdio: "inherit",
       env: { ...process.env, CHAT_TEST_DATABASE_URL: url, INDEXER_UPGRADE_DATABASE_URL: url,
         MIGRATION_UPGRADE_BASE_SHA: base, MIGRATION_SNAPSHOT_OUTPUT: mode === "snapshot" ? resolve(output ?? "before.json") : "", MIGRATION_LOCAL_FULL: mode === "full" ? "1" : "", MIGRATION_LOCAL_UPGRADE: mode === "upgrade" ? "1" : "",
-        MIGRATION_CANDIDATE_CAPTURE: "", ...extraEnv },
+        MIGRATION_CANDIDATE_CAPTURE: "", MIGRATION_PREPARE_CHECKS: "", ...extraEnv },
     });
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`Migration fixture failed for ${project}`);
@@ -46,8 +46,8 @@ async function runFixture(extraEnv = {}) {
 if (mode !== "prepare") {
   await runFixture();
 } else {
-  if (!output || !/^[a-z][a-z0-9_]*$/.test(migrationName ?? "") || !reason?.trim()) {
-    throw new Error("prepare requires candidate SQL path, migration name and review reason");
+  if (!output || !/^[a-z][a-z0-9_]*$/.test(migrationName ?? "") || !reason?.trim() || !checksPath) {
+    throw new Error("prepare requires candidate SQL path, migration name, review reason and checks.sql");
   }
   const configPath = resolve("db/migration-kit.config.json");
   const config = await loadMigrationConfig(configPath);
@@ -62,6 +62,8 @@ if (mode !== "prepare") {
     const sql = (await readFile(resolve(output), "utf8")).trimEnd() + "\n";
     const source = resolve(scratch, "candidate.sql");
     const capture = resolve(scratch, "capture.json");
+    const checks = resolve(scratch, "checks.sql");
+    await writeFile(checks, await readFile(resolve(checksPath)));
     await writeFile(source, sql);
     await runFixture({
       MIGRATION_CANDIDATE_SQL: source,
@@ -75,7 +77,11 @@ if (mode !== "prepare") {
     }, null, 2) + "\n", { flag: "wx" });
     sidecarWritten = true;
     await loadMigrationConfig(configPath);
-    await runFixture({ MIGRATION_LOCAL_UPGRADE: "1" });
+    await runFixture({
+      MIGRATION_LOCAL_UPGRADE: "1",
+      MIGRATION_PREPARE_CHECKS: checks,
+      MIGRATION_CANDIDATE_MODULE: new URL("./capture-candidate.js", import.meta.url).href,
+    });
     console.log(file);
   } catch (error) {
     if (file) await rm(file, { force: true });
