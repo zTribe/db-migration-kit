@@ -21,3 +21,4 @@ export { readTargetState, guardMigration } from "./guarded-plan.js";
 export { resolveUpgradePrefix, restoreUpgradeRoles, compareUpgradeAcl, restoreUpgradeAcl } from "./upgrade-ci.js";
 export { normalizeMigrationRole } from "./migration-role.js";
 export { planDependencyImpact, assertDependencyImpactReviewed } from "./dependency-impact.js";
+export { compareRpcCatalogContracts } from "./rpc-contract-audit.js";
