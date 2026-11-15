@@ -66,3 +66,7 @@ export declare function verifyMigrationContracts(configPath: string, contracts: 
 
 export type RpcContractAudit = { changes: Array<{id:string; status:"review-required"|"signature-compatible"; reason:string; incompatibleFields?:string[]}>; requiresReview:boolean; releaseApproved:false; dependencyGraphComplete:false; warnings:string[] };
 export function compareRpcCatalogContracts(before:Pick<SchemaState,"functions">,after:Pick<SchemaState,"functions">,identities:string[]):RpcContractAudit;
+
+export type RpcTableDependencyContract = {id:string;tables:string[]};
+export type RpcTableDependencyAudit = {results:Array<{id:string;actualTables?:string[];missing:string[];stale:string[];warnings:string[];requiresReview:boolean}>;requiresReview:boolean;releaseApproved:false;dependencyGraphComplete:false;warnings:string[]};
+export function auditRpcTableDependencies(snapshot:Pick<SchemaState,"functions">,contracts:RpcTableDependencyContract[]):RpcTableDependencyAudit;
