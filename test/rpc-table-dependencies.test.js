@@ -60,3 +60,17 @@ test("comments and string literals do not invent references",()=>{
  const result=audit([fn("candles","-- FROM chain.fake\nSELECT 'JOIN chain.fake' AS text, 1 FROM chain.tokens")],["chain.tokens"]);
  assert.deepEqual(result.results[0].actualTables,["chain.tokens"]);
 });
+
+test("PLpgSQL UPSERT, RETURNING INTO and local variables do not fabricate table edges",()=>{
+ const body = [
+   "INSERT INTO app.api_rate_limit_buckets AS current_bucket (bucket_key, window_start, hit_count)",
+   "VALUES ('k', now(), 1)",
+   "ON CONFLICT (bucket_key, window_start) DO UPDATE SET hit_count = current_bucket.hit_count + 1",
+   "RETURNING hit_count INTO v_hits;",
+   "SELECT clock_timestamp() INTO v_now;",
+   "DELETE FROM app.api_rate_limit_buckets WHERE bucket_key = 'k';",
+ ].join("\\n");
+ const result=audit([fn("candles",body)],["app.api_rate_limit_buckets"]);
+ assert.deepEqual(result.results[0].actualTables,["app.api_rate_limit_buckets"]);
+ assert.deepEqual(result.results[0].warnings,[]);
+});
