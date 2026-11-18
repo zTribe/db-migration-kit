@@ -24,6 +24,7 @@ WITH tables AS (
 ), constraints AS (
  SELECT n.nspname AS schema_name,c.relname AS table_name,
         con.conname AS name, con.contype AS kind,
+        con.convalidated AS validated,
         pg_catalog.pg_get_constraintdef(con.oid,true) AS definition
  FROM pg_catalog.pg_constraint con JOIN pg_catalog.pg_class c ON c.oid=con.conrelid
  JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
@@ -105,7 +106,13 @@ export function normalizeSchemaCatalog(value){
   if(!value || typeof value!=="object")throw new Error("invalid structure catalog");
   return Object.fromEntries(Object.entries(SORT_KEYS).map(([kind,key])=>{
     if(!Array.isArray(value[kind]))throw new Error(`missing catalog section: ${kind}`);
-    const list=value[kind].map(row=>structuredClone(row));
+    const list=value[kind].map(row=>{
+      const item=structuredClone(row);
+      // Historical snapshots have no validation flag. Retain their digests for
+      // validated constraints while recording NOT VALID as a real catalog diff.
+      if(kind==="constraints" && item.validated===true)delete item.validated;
+      return item;
+    });
     list.sort((a,b)=>key(a).localeCompare(key(b)));
     return [kind,list];
   }));
