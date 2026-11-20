@@ -4,10 +4,11 @@ function unquoteIdentifier(value) { return value.replaceAll('"', ''); }
 
 /** Check owner/schema capabilities before owner-sensitive function DDL runs. */
 export async function preflightMigrationCapabilities(client, sql) {
+  const transitions = [...sql.matchAll(/\b(?:set\s+(?:local\s+)?role\s+([a-z_][a-z0-9_$]*)|reset\s+role)\s*;/ig)].map(m => ({ position: m.index, role: m[1]?.toLowerCase() ?? null }));
   const targets = [];
   for (const match of sql.matchAll(FUNCTION_DDL)) {
     const qualified = match[1].split('.');
-    targets.push({ schema: unquoteIdentifier(qualified.length === 2 ? qualified[0] : 'public'), name: unquoteIdentifier(qualified.at(-1)) });
+    targets.push({ schema: unquoteIdentifier(qualified.length === 2 ? qualified[0] : 'public'), name: unquoteIdentifier(qualified.at(-1)), position: match.index });
   }
   if (!targets.length) return;
   const plannedCreate = new Set([...sql.matchAll(/grant\s+create\s+on\s+schema\s+([a-z_][a-z0-9_$]*)\s+to\s+([a-z_][a-z0-9_$]*)/ig)].map(match => `${match[1].toLowerCase()}:${match[2].toLowerCase()}`));
@@ -15,14 +16,17 @@ export async function preflightMigrationCapabilities(client, sql) {
   const identity = await client.query(`select current_user as role, coalesce((select rolsuper from pg_catalog.pg_roles where rolname=current_user),false) as superuser`);
   if (identity.rows[0]?.superuser) return;
   for (const target of targets) {
-    const schema = await client.query("select has_schema_privilege(current_user,$1,'CREATE') as can_create", [target.schema]);
-    if (!schema.rows[0]?.can_create && ![...plannedCreate].some(key => key.startsWith(`${target.schema.toLowerCase()}:`))) throw new Error(`migration capability denied: ${identity.rows[0]?.role} lacks CREATE on schema ${target.schema} for function ${target.schema}.${target.name}`);
+    const activeRole = transitions.filter(t => t.position < target.position).at(-1)?.role ?? null;
+    const schemaRole = activeRole ?? identity.rows[0]?.role;
+    const schema = await client.query("select has_schema_privilege($1,$2,'CREATE') as can_create", [schemaRole, target.schema]);
+    if (!schema.rows[0]?.can_create && !plannedCreate.has(`${target.schema.toLowerCase()}:${schemaRole.toLowerCase()}`)) throw new Error(`migration capability denied: ${schemaRole} lacks CREATE on schema ${target.schema} for function ${target.schema}.${target.name}`);
     const functions = await client.query(`
       select p.oid::regprocedure::text as signature, owner_role.rolname as owner,
-             pg_catalog.pg_has_role(current_user, owner_role.oid, 'USAGE') as can_alter
+             pg_catalog.pg_has_role(current_user, owner_role.oid, 'USAGE') as can_alter,
+             pg_catalog.pg_has_role(current_user, owner_role.oid, 'SET') as can_set
       from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
       join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
       where n.nspname=$1 and p.proname=$2`, [target.schema, target.name]);
-    for (const row of functions.rows) if (!row.can_alter && !plannedMembership.has(row.owner.toLowerCase())) throw new Error(`migration capability denied: ${identity.rows[0]?.role} cannot alter ${row.signature}; owner is ${row.owner}`);
+    for (const row of functions.rows) if (!row.can_alter && !(activeRole === row.owner.toLowerCase() && row.can_set) && !plannedMembership.has(row.owner.toLowerCase())) throw new Error(`migration capability denied: ${identity.rows[0]?.role} cannot alter ${row.signature}; owner is ${row.owner}`);
   }
 }
