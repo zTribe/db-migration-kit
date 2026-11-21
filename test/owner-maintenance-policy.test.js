@@ -15,6 +15,7 @@ test("Chat versioned RPC requires explicit reviewed owner transfer",()=>{
  assert.equal(chat.forMigration({version:"20261121122000_list_v1",sql}).functionName,"list_v1");
  assert.equal(chat.forMigration({version:"20261121122000_normal",sql:"CREATE TABLE app.sample(id integer);"}),null);
  assert.throws(()=>chat.forCandidate("unknown",sql),/approved recipe/);
+ assert.throws(()=>chat.forMigration({version:"20261121122000_other",sql:"ALTER FUNCTION app.rogue() OWNER TO chat_api_runtime_owner;"}),/approved recipe/);
  assert.throws(()=>chat.forCandidate("list_v1",sql+" ALTER FUNCTION app.other() OWNER TO chat_api_runtime_owner;"),/unexpected function DDL/);
  assert.throws(()=>chat.forCandidate("list_v1",sql.replace(/REVOKE CREATE[^;]+;/,"")),/requires temporary CREATE/);
  assert.throws(()=>chat.forCandidate("list_v1",sql+" GRANT chat_api_runtime_owner TO current_user;"),/forbids SQL role grants/);

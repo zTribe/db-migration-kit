@@ -8,7 +8,7 @@ const strip = sql => sql.replace(/--[^\r\n]*/g,"").replace(/\/\*[\s\S]*?\*\//g,"
 const ident = s => { if(typeof s!=="string" || !ID.test(s)) throw Error("invalid owner policy identifier"); return s; };
 const qi = s => '"' + ident(s) + '"';
 const esc = s => s.replace(/[.*+?^$()|[\]{}]/g,"\\$&");
-const SENSITIVE = /\b(?:set\s+(?:local\s+)?role|grant\s+create\s+on\s+schema|owner\s+to\s+[a-z_]|grant\s+[a-z_][a-z0-9_]*\s+to\s+current_user)\b/i;
+const SENSITIVE = /\b(?:set\s+(?:local\s+)?role|grant\s+create\s+on\s+schema|owner\s+to\s+[a-z_][a-z0-9_]*|grant\s+[a-z_][a-z0-9_]*\s+to\s+current_user)\b/i;
 
 export function createOwnerMaintenancePolicy({recipes=[],legacyThrough=""}={}) {
   if(!Array.isArray(recipes)) throw Error("invalid owner recipes");
