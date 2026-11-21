@@ -4,7 +4,14 @@
  * for dynamic DO blocks, changing ownership, DDL dependencies and search_path.
  */
 import { structuralSql } from "./owner-maintenance.js";
-const qualified = /^[a-z_][a-z0-9_$]*\.[a-z_][a-z0-9_$]*$/;
+// Accept canonical lower-case identifiers, quoted or unquoted.
+const ident = '(?:"([a-z_][a-z0-9_$]*)"|([a-z_][a-z0-9_$]*))';
+const qualified = new RegExp('^' + ident + '\\.' + ident + '$');
+function normalizeQualified(name) {
+  const match = qualified.exec(name);
+  if (!match) return null;
+  return (match[1] ?? match[2]) + '.' + (match[3] ?? match[4]);
+}
 const TOKEN = "([^\\s,;(]+)";
 function rule(label, head, pattern) {
   return {label,head:new RegExp(head,"ig"),pattern:new RegExp(pattern,"ig")};
@@ -29,9 +36,10 @@ function targets(body,rule) {
   if(all.length!==found.length) throw Error("migration capability denied: unsupported "+rule.label+" SQL; require explicit qualified form");
   return found.map(match=>{
     const name=match[1];
-    if(!qualified.test(name)||name!==name.toLowerCase())
+    const normalized=normalizeQualified(name);
+    if(!normalized)
       throw Error("migration capability denied: "+rule.label+" requires lowercase schema-qualified object: "+String(name));
-    return {name,position:match.index,kind:rule.label};
+    return {name:normalized,position:match.index,kind:rule.label};
   });
 }
 function activeRole(body,offset) {
@@ -39,7 +47,7 @@ function activeRole(body,offset) {
   return changes.filter(change=>change.index<offset).at(-1)?.[1]?.toLowerCase()??null;
 }
 export async function preflightRelationCapabilities(client,sql) {
-  const body=structuralSql(sql);
+  const body=structuralSql(sql,{preserveQuotedIdentifiers:true});
   const writes=OWNED.flatMap(r=>targets(body,r)),created=NEW.flatMap(r=>targets(body,r));
   let login=null;
   for(const item of created) {
