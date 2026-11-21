@@ -168,7 +168,8 @@ export async function applyMigrations(pool, options) {
           if (guard) {
             // A later reviewed migration may introduce another service-only RPC.
             // Check everything that exists now; require the full declared set at completion.
-            await assertServiceOnlyFunctions(client, config.serviceOnlyFunctions, {allowMissing:true});
+            await assertServiceOnlyFunctions(client, config.serviceOnlyFunctions,
+              {allowMissing: migration.version !== migrations.at(-1)?.version});
             await guard.after(client);
           }
           await client.query(
