@@ -4,6 +4,24 @@ import { resolve } from "node:path";
 import { readTargetState, checksumText, createMigration, loadMigrationConfig, planMigration, assertMigrationReview, generateMigrationSql, applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget, planDependencyImpact, planDependencyImpactAst, assertDependencyImpactReviewed } from "../src/index.js";
 
 const [command = "status", ...args] = process.argv.slice(2);
+if (command === "draft-check") {
+  const { dirname, relative, isAbsolute } = await import("node:path");
+  const { checkAiMigrationDraft } = await import("../src/ai-draft-check.js");
+  const configPath = resolve(process.cwd(), args.find(x => x.startsWith("--config="))?.slice(9) ?? "db/migration-kit.config.json");
+  const source = args.find(x => x.startsWith("--sql="))?.slice(6);
+  const name = args.find(x => x.startsWith("--name="))?.slice(7);
+  if (!source || !name) throw Error("Usage: db-migrate-kit draft-check --config=db/migration-kit.config.json --sql=candidate.sql --name=snake_case");
+  const config = await loadMigrationConfig(configPath);
+  const candidate = resolve(source);
+  const rel = relative(config.directory,candidate);
+  if (!rel.startsWith("..") && !isAbsolute(rel))
+    throw Error("Candidate must be outside db/migrations; historical SQL is immutable");
+  const ownerConfig = JSON.parse(await readFile(resolve(dirname(configPath),"owner-maintenance-policy.json"),"utf8"));
+  const report = await checkAiMigrationDraft({name,sql:await readFile(candidate,"utf8"),ownerConfig});
+  console.log(JSON.stringify(report,null,2));
+  if (!report.ok) process.exitCode=1;
+  process.exit();
+}
 if (command === "prepare") {
   await import("./test-local.js");
   process.exit(0);

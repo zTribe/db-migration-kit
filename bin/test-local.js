@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { checksumText, createMigration, loadMigrationConfig, resolveUpgradePrefix } from "../src/index.js";
 import { randomUUID } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
+import { checkAiMigrationDraft } from "../src/ai-draft-check.js";
 
 const [mode, project, ref = "HEAD", output, migrationName, reason, checksPath] = process.argv.slice(2);
 if (!["upgrade", "full", "snapshot", "prepare"].includes(mode) || !["chat", "indexer"].includes(project)) {
@@ -60,6 +61,13 @@ if (mode !== "prepare") {
   let sidecarWritten = false;
   try {
     const sql = (await readFile(resolve(output), "utf8")).trimEnd() + "\n";
+    if (resolve(output).startsWith(resolve(config.directory) + "/"))
+      throw Error("Candidate SQL must remain outside db/migrations until prepare succeeds");
+    const ownerConfig = JSON.parse(await readFile(resolve("db/owner-maintenance-policy.json"),"utf8"));
+    const draft = await checkAiMigrationDraft({name:migrationName,sql,ownerConfig});
+    console.log(JSON.stringify({stage:"draft-check",...draft},null,2));
+    if (!draft.ok) throw Error("AI draft-check failed; correct candidate and Owner recipe before PG17 prepare");
+
     const source = resolve(scratch, "candidate.sql");
     const capture = resolve(scratch, "capture.json");
     const checks = resolve(scratch, "checks.sql");

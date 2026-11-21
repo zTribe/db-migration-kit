@@ -189,3 +189,14 @@ adoption. Every subsequent SQL migration needs a sibling
 `<name>.sql.review.json` with the before and after states, review, and SQL
 checksum. The generate command writes both files. Explicit SQL can also
 use this format and undergo the same transactional catalog checks.
+
+
+## AI migration drafting: fail fast before prepare
+
+Run from the Chat or Indexer root:
+
+```bash
+npm exec -- db-migrate-kit draft-check --config=db/migration-kit.config.json --sql=db/candidates/change.sql --name=change_name
+```
+
+This read-only preflight reports machine-readable issue `code`, `severity`, `message`, and `next` actions. It checks Owner recipes, transaction boundaries, SECURITY DEFINER paths and common migration hazards, and provides advisory PostgreSQL AST findings. No database connection or migration file is created. AI must fix errors and explicitly review warnings, then run `db-migrate-kit prepare` with PG17 non-superuser tests. `prepare` now invokes the same preflight before PG17 and before creating the official migration/sidecar. Never treat this preflight as deployment approval.
