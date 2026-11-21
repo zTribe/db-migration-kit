@@ -88,9 +88,13 @@ export function createOwnerMaintenancePolicy({recipes=[],legacyThrough="",legacy
     const rule=Object.freeze({
       name:ident(recipe.name),role:ident(recipe.role),schema:ident(recipe.schema),
       functionName:ident(recipe.functionName),mode:recipe.mode,
-      version:recipe.version || null
+      version:recipe.version || null,
+      serviceExecuteRole:recipe.serviceExecuteRole ? ident(recipe.serviceExecuteRole) : null,
+      notifyPostgrest:recipe.notifyPostgrest === true
     });
-    if(!["set-role","transfer"].includes(rule.mode)||entries.has(rule.name)) throw Error("duplicate/invalid owner recipe");
+    if(!["set-role","transfer"].includes(rule.mode)||entries.has(rule.name)||
+       ((rule.serviceExecuteRole||rule.notifyPostgrest)&&rule.mode!=="transfer") ||
+       (recipe.notifyPostgrest!==undefined&&typeof recipe.notifyPostgrest!=="boolean")) throw Error("duplicate/invalid owner recipe");
     if(rule.version&&!/^\d{3,14}_[a-z0-9_]+$/.test(rule.version)) throw Error("invalid owner recipe version");
     entries.set(rule.name,rule);
   }
@@ -113,12 +117,23 @@ export function createOwnerMaintenancePolicy({recipes=[],legacyThrough="",legacy
     const grantStmt=new RegExp("^grant create on schema "+schema+" to "+role+"$","i");
     const revokeStmt=new RegExp("^revoke create on schema "+schema+" from "+role+"$","i");
     const setStmt=new RegExp("^set local role "+role+"$","i");
-    const functionStmt=new RegExp("^(?:create (?:or replace )?|alter )function "+fn+"\\s*\\(","i");
+    const functionStmt=new RegExp("^(?:create (?:or replace )?|alter )function "+fn+"\\\\s*\\\\(","i");
+    // An opt-in service-only RPC can edit EXECUTE on its exact signature,
+    // never table ACLs, roles or unrelated functions.
+    const signature=fn+"\\\\s*\\\\(integer\\\\)";
+    const executeRevoke=rule.serviceExecuteRole ? new RegExp(
+      "^revoke all on function "+signature+" from public, anon, authenticated, "+esc(rule.serviceExecuteRole)+"$","i") : null;
+    const executeGrant=rule.serviceExecuteRole ? new RegExp(
+      "^grant execute on function "+signature+" to "+esc(rule.serviceExecuteRole)+"$","i") : null;
+    const notifyStmt=rule.notifyPostgrest ? /^notify pgrst,$/i : null;
         for(const raw of body.split(";")) {
       const stmt=raw.trim().replace(/\\s+/g," ");
       if(!stmt)continue;
       if(grantStmt.test(stmt)||revokeStmt.test(stmt)||setStmt.test(stmt)||
-         /^reset role$/i.test(stmt)||functionStmt.test(stmt))continue;
+         /^reset role$/i.test(stmt)||functionStmt.test(stmt)||
+         (executeRevoke&&executeRevoke.test(stmt))||
+         (executeGrant&&executeGrant.test(stmt))||
+         (notifyStmt&&notifyStmt.test(stmt)))continue;
       if(allowLegacyDo&&/^do$/i.test(stmt))continue;
       throw Error("owner policy forbids extra SQL statement: "+stmt.slice(0,100));
     }
@@ -130,12 +145,34 @@ export function createOwnerMaintenancePolicy({recipes=[],legacyThrough="",legacy
     const grants=[...body.matchAll(/\bgrant\b/ig)];
     const revokes=[...body.matchAll(/\brevoke\b/ig)];
     const grant=[...body.matchAll(grantPattern)],revoke=[...body.matchAll(revokePattern)];
-    if(grants.length!==1||revokes.length!==1||grant.length!==1||revoke.length!==1||
+    const grantCount=rule.serviceExecuteRole?2:1, revokeCount=rule.serviceExecuteRole?2:1;
+    if(grants.length!==grantCount||revokes.length!==revokeCount||grant.length!==1||revoke.length!==1||
         grant[0].index>=revoke[0].index)
       throw Error("owner policy requires temporary CREATE grant and revoke in one ordered pair");
     const sets=[...body.matchAll(/\bset\s+(?:local\s+)?role\s+([a-z_][a-z_0-9]*)\s*;/ig)];
     const resets=[...body.matchAll(/\breset\s+role\s*;/ig)];
     const firstFunction=functions[0].index,lastFunction=functions.at(-1).index;
+    if(rule.serviceExecuteRole) {
+      const execRevokeMatch=[...body.matchAll(new RegExp(
+        "\\\\brevoke\\\\s+all\\\\s+on\\\\s+function\\\\s+"+fn+
+        "\\\\s*\\\\(integer\\\\)\\\\s+from\\\\s+public\\\\s*,\\\\s*anon\\\\s*,\\\\s*authenticated\\\\s*,\\\\s*"+
+        esc(rule.serviceExecuteRole)+"\\\\s*;","ig"))];
+      const execGrantMatch=[...body.matchAll(new RegExp(
+        "\\\\bgrant\\\\s+execute\\\\s+on\\\\s+function\\\\s+"+fn+
+        "\\\\s*\\\\(integer\\\\)\\\\s+to\\\\s*"+esc(rule.serviceExecuteRole)+"\\\\s*;","ig"))];
+      if(execRevokeMatch.length!==1||execGrantMatch.length!==1||
+         !(firstFunction<execRevokeMatch[0].index&&execRevokeMatch[0].index<execGrantMatch[0].index&&
+           execGrantMatch[0].index<lastFunction))
+        throw Error("owner policy requires exact service EXECUTE revoke/grant before owner transfer");
+    }
+    const notices=[...body.matchAll(/\\bnotify\\s+pgrst\\s*,\\s*;/ig)];
+    if(rule.notifyPostgrest) {
+      if(notices.length!==1||!/^notify pgrst, 'reload schema';$/im.test(sql.trimEnd().split("\\n").at(-1).trim())||
+         notices[0].index<revoke[0].index)
+        throw Error("owner policy requires one final PostgREST cache reload notification");
+    } else if(notices.length) {
+      throw Error("owner policy forbids unreviewed notification");
+    }
     if(rule.mode==="set-role") {
       if(sets.length!==1||resets.length!==1||
           sets[0][1].toLowerCase()!==rule.role)
