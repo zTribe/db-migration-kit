@@ -9,7 +9,7 @@ function sample(){
  schemas:[{schema_name:"app",owner:"postgres",acl:"{postgres=UC/postgres,owner=U/postgres}"}],
  database_acl:{owner:"postgres",acl:"{=Tc/postgres,postgres=CTc/postgres}"},
  relations:[{schema_name:"app",name:"records",relkind:"r",owner:"postgres",rls:true,force_rls:false,acl:null}],
- functions:[],column_acls:[],policies:[]};
+ functions:[],column_acls:[],policies:[],migration_ledger:[{version:"001_chain",name:"001_chain.sql",checksum:"a".repeat(64),source:"migration"}]};
 }
 const cfg={project:"chat",schemas:["app"],roles:["postgres","owner"]};
 test("scoped Production profile fingerprints real Owner and grants",()=>{
@@ -40,4 +40,11 @@ test("baseline refuses wrong PG major or absent role",()=>{
  assert.throws(()=>deriveProductionPermissionProfile({...sample(),postgres_version:"18.1"},cfg),/PG17/);
  const missing=sample();missing.roles.pop();
  assert.throws(()=>deriveProductionPermissionProfile(missing,cfg),/Production role missing/);
+});
+
+test("Production baseline ledger mismatch fails rather than replaying future migrations",()=>{
+ const profile=deriveProductionPermissionProfile(sample(),cfg);
+ assert.equal(profile.baseline.version,"001_chain");
+ const changed=sample();changed.migration_ledger[0].checksum="b".repeat(64);
+ assert.equal(compareProductionPermissionProfiles(profile,deriveProductionPermissionProfile(changed,cfg)).ok,false);
 });

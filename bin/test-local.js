@@ -18,7 +18,8 @@ const base = mode !== "full" && mode !== "production"
   ? execFileSync("git", ["rev-parse", "--verify", "--end-of-options", ref + "^{commit}"], { encoding: "utf8" }).trim()
   : "";
 const docker = (...args) => execFileSync("docker", args, { encoding: "utf8" }).trim();
-const pattern = mode !== "full" && mode !== "production" ? "^PR migrations upgrade" :
+const pattern = mode==="production" ? "^Production permission replay" :
+ mode !== "full" ? "^PR migrations upgrade" :
   project === "chat" ? "^shared migration runner applies the full" : "^Indexer replays the full";
 const file = project === "chat" ? "test/chat-migrate.integration.test.mjs" : "test/migration-runner.integration.mjs";
 
@@ -43,7 +44,7 @@ async function runFixture(extraEnv = {}) {
       CHAT_TEST_DATABASE_URL:url, INDEXER_UPGRADE_DATABASE_URL:url,
       MIGRATION_UPGRADE_BASE_SHA:base,
       MIGRATION_SNAPSHOT_OUTPUT:mode==="snapshot"?resolve(output??"before.json"):"",
-      MIGRATION_LOCAL_FULL:(mode==="full"||mode==="production")?"1":"",
+      MIGRATION_LOCAL_FULL:mode==="full"?"1":"",
       MIGRATION_LOCAL_UPGRADE:mode==="upgrade"?"1":"",
       MIGRATION_VERIFY_PRODUCTION_PROFILE:mode==="production"?"1":"",
       MIGRATION_CANDIDATE_CAPTURE:"",MIGRATION_PREPARE_CHECKS:"",

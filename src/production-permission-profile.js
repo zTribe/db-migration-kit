@@ -57,19 +57,26 @@ export function deriveProductionPermissionProfile(snapshot,{project,schemas,role
   if(!row)throw Error("Production schema missing: "+name);
   return {name,owner:row.owner,acl:acl(row.acl)};
  });
+ const ledger=snapshot.migration_ledger;
+ if(!Array.isArray(ledger)||!ledger.length||
+  ledger.some((row,i)=>typeof row.version!=="string"||typeof row.checksum!=="string"||
+   (i>0&&ledger[i-1].version>=row.version)))
+  throw Error("Production snapshot requires sorted immutable migration ledger");
+ const latest=ledger.at(-1);
+ const baseline={version:latest.version,checksum:latest.checksum,count:ledger.length};
  const dbEntries=acl(snapshot.database_acl?.acl)??[];
  const dbRights={owner:snapshot.database_acl?.owner,acl:dbEntries.filter(entry=>{
   const member=entry.split("=")[0];return !member||names.includes(member);
  })};
  return {schemaVersion:1,project,source:"production",migrationRole,postgresMajor:17,
   schemas:scope,roles:roleRows,memberships:membership,
-  schemaRights,databaseRights:dbRights,
+  schemaRights,databaseRights:dbRights,baseline,
   catalog:projectPermissionCatalog(snapshot,scope)};
 }
 /** Adapt the shared Kit's real PostgreSQL permission-state query to the export format. */
 /** Match exactly the columns and hashes in the operator's Supabase SQL Editor export.
  * readPermissionState() alone lacks function definition hashes and cannot prove parity. */
-async function readProductionCatalog(client,schemas,roles){
+async function readProductionCatalog(client,schemas,roles,project){
  const query=async(sql,params=[])=> (await client.query(sql,params)).rows;
  const postgres_version=(await query("SELECT current_setting('server_version') AS v"))[0].v;
  const roleRows=await query(
@@ -86,15 +93,19 @@ async function readProductionCatalog(client,schemas,roles){
   "SELECT n.nspname AS schema_name,p.proname AS name,pg_catalog.pg_get_function_identity_arguments(p.oid) AS arguments,pg_catalog.pg_get_userbyid(p.proowner) AS owner,p.prosecdef AS security_definer,p.proconfig AS function_settings,p.proacl::text AS acl,md5(pg_catalog.pg_get_functiondef(p.oid)) AS definition_hash FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=ANY($1::text[]) AND p.prokind IN ('f','p')",[schemas]);
  const policies=await query(
   "SELECT schemaname,tablename,policyname,permissive,roles,cmd,md5(coalesce(qual,'')) AS using_hash,md5(coalesce(with_check,'')) AS check_hash FROM pg_catalog.pg_policies WHERE schemaname=ANY($1::text[])",[schemas]);
+ const ledgerSchema=project==="chat"?"app":project==="indexer"?"chain":null;
+ if(!ledgerSchema)throw Error("Invalid Production project");
+ const migration_ledger=await query(
+  "SELECT version,checksum,name,source FROM "+ledgerSchema+".schema_migrations ORDER BY version");
  const database_acl=(await query(
   "SELECT pg_catalog.pg_get_userbyid(datdba) AS owner,datacl::text AS acl FROM pg_catalog.pg_database WHERE datname=current_database()"))[0];
  return {postgres_version,roles:roleRows,memberships,schemas:schemasRows,
-  relations,column_acls,functions,policies,database_acl};
+  relations,column_acls,functions,policies,database_acl,migration_ledger};
 }
 export function compareProductionPermissionProfiles(expected,actual){
  if(expected.schemaVersion!==1||actual.schemaVersion!==1||expected.project!==actual.project)
   throw Error("Production permission profile format/project mismatch");
- const checks=["postgresMajor","migrationRole","schemas","roles","memberships","schemaRights","databaseRights"];
+ const checks=["postgresMajor","migrationRole","schemas","roles","memberships","schemaRights","databaseRights","baseline"];
  const findings=checks.filter(k=>json(expected[k])!==json(actual[k])).map(k=>({section:k,reason:"production_mismatch"}));
  for(const section of SECTIONS)
   if(json(expected.catalog[section])!==json(actual.catalog[section]))
@@ -118,7 +129,7 @@ export async function verifyProductionPermissionFixture(client,profile){
  try{
   const major=(await client.query("SELECT current_setting('server_version_num')::integer / 10000 AS major")).rows[0]?.major;
   if(major!==profile.postgresMajor)throw Error("Postgres major mismatch: expected "+profile.postgresMajor+", got "+major);
-  const state=await readProductionCatalog(client,profile.schemas,profile.roles.map(x=>x.rolname));
+  const state=await readProductionCatalog(client,profile.schemas,profile.roles.map(x=>x.rolname),profile.project);
   return assertProductionPermissionProfile(profile,state);
  } finally {await client.query("ROLLBACK")}
 }

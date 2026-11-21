@@ -85,7 +85,7 @@ export function auditRpcTableDependenciesAst(snapshot:Pick<SchemaState,"function
 
 export type ProductionPermissionProfile = {schemaVersion:1;project:"chat"|"indexer";source:"production";migrationRole:string;
  postgresMajor:17;schemas:string[];roles:Record<string,unknown>[];memberships:Record<string,unknown>[];
- schemaRights:Record<string,unknown>[];databaseRights:Record<string,unknown>;catalog:Record<string,{count:number;sha256:string}>};
+ schemaRights:Record<string,unknown>[];databaseRights:Record<string,unknown>;baseline:{version:string;checksum:string;count:number};catalog:Record<string,{count:number;sha256:string}>};
 export function deriveProductionPermissionProfile(snapshot:any,options:{project:"chat"|"indexer";schemas:string[];roles:string[];migrationRole?:string}):ProductionPermissionProfile;
 export function compareProductionPermissionProfiles(expected:ProductionPermissionProfile,actual:ProductionPermissionProfile):{ok:boolean;findings:any[];limitations:string};
 export function assertProductionPermissionProfile(profile:ProductionPermissionProfile,state:any):{ok:boolean;findings:any[];limitations:string};
