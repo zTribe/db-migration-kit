@@ -75,8 +75,10 @@ const qi = s => '"' + ident(s) + '"';
 const esc = s => s.replace(/[.*+?^$()|[\]{}]/g,"\\$&");
 const SENSITIVE = /\b(?:set\s+(?:local\s+)?role|grant\s+create\s+on\s+schema|owner\s+to\s+[a-z_][a-z0-9_]*|grant\s+[a-z_][a-z0-9_]*\s+to\s+current_user)\b/i;
 
-export function createOwnerMaintenancePolicy({recipes=[],legacyThrough=""}={}) {
-  if(!Array.isArray(recipes)) throw Error("invalid owner recipes");
+export function createOwnerMaintenancePolicy({recipes=[],legacyThrough="",legacyDoVersions=[]}={}) {
+  if(!Array.isArray(recipes)||!Array.isArray(legacyDoVersions)||
+     legacyDoVersions.some(v=>typeof v!=="string"||!/^(?:\\d{3}|\\d{14})_[a-z0-9_]+$/.test(v)))
+    throw Error("invalid owner recipes or legacy DO versions");
   const entries=new Map();
   for(const recipe of recipes) {
     const rule=Object.freeze({
@@ -88,7 +90,7 @@ export function createOwnerMaintenancePolicy({recipes=[],legacyThrough=""}={}) {
     if(rule.version&&!/^\d{3,14}_[a-z0-9_]+$/.test(rule.version)) throw Error("invalid owner recipe version");
     entries.set(rule.name,rule);
   }
-  function verify(sql,rule) {
+  function verify(sql,rule,{allowLegacyDo=false}={}) {
     if(typeof sql!=="string"||!sql.trim()) throw Error("owner maintenance requires reviewed SQL");
     const body=strip(sql),target=rule.schema+"."+rule.functionName;
     const functions=[...body.matchAll(FUNCTION_DDL)];
@@ -100,6 +102,23 @@ export function createOwnerMaintenancePolicy({recipes=[],legacyThrough=""}={}) {
     if(/\b(?:create\s+(?:or\s+replace\s+)?|alter\s+|drop\s+)(?:table|view|materialized\s+view|index|trigger|policy|role|schema|extension|sequence)\b/i.test(body))
       throw Error("owner policy forbids unrelated object DDL");
     const role=esc(rule.role),schema=esc(rule.schema),fn=esc(target);
+    // A reviewed recipe must not become permission to execute extra SQL,
+    // especially DO/CALL/SELECT with dynamically constructed privileged DDL.
+    // Historic DO-based role checks are grandfathered ONLY by explicit version
+    // when the repository's immutable SQL checksum is independently guarded.
+    const grantStmt=new RegExp("^grant create on schema "+schema+" to "+role+"$","i");
+    const revokeStmt=new RegExp("^revoke create on schema "+schema+" from "+role+"$","i");
+    const setStmt=new RegExp("^set local role "+role+"$","i");
+    const functionStmt=new RegExp("^(?:create (?:or replace )?|alter )function "+fn+"\\\\s*\\\\(","i");
+        for(const raw of body.split(";")) {
+      const stmt=raw.trim().replace(/\\s+/g," ");
+      if(!stmt)continue;
+      if(grantStmt.test(stmt)||revokeStmt.test(stmt)||setStmt.test(stmt)||
+         /^reset role$/i.test(stmt)||functionStmt.test(stmt))continue;
+      if(allowLegacyDo&&/^do$/i.test(stmt))continue;
+      throw Error("owner policy forbids extra SQL statement: "+stmt.slice(0,100));
+    }
+
     const grantPattern=new RegExp("\\bgrant\\s+create\\s+on\\s+schema\\s+"+schema+"\\s+to\\s+"+role+"\\s*;","ig");
     const revokePattern=new RegExp("\\brevoke\\s+create\\s+on\\s+schema\\s+"+schema+"\\s+from\\s+"+role+"\\s*;","ig");
     if(new RegExp("\\b(?:grant\\s+"+role+"\\s+to|alter\\s+role\\s+"+role+")\\b","i").test(body))
@@ -137,14 +156,16 @@ export function createOwnerMaintenancePolicy({recipes=[],legacyThrough=""}={}) {
     const v=migration?.version||"";
     const rule=[...entries.values()].find(r=>r.version===v||
       (!r.version&&new RegExp("^\\d{3,14}_"+esc(r.name)+"$").test(v)));
-    if(rule) return verify(migration.sql,rule);
+    if(rule) return verify(migration.sql,rule,{
+      allowLegacyDo:rule.version===v && legacyDoVersions.includes(v)
+    });
     if((!legacyThrough || v>legacyThrough)&&SENSITIVE.test(strip(migration?.sql||"")))
       throw Error("owner-sensitive migration requires approved recipe: "+v);
     return null;
   }
   function forCandidate(name,sql) {
     const rule=entries.get(name);
-    if(rule) return verify(sql,rule);
+    if(rule) return verify(sql,rule,{allowLegacyDo:false});
     if(SENSITIVE.test(strip(sql||""))) throw Error("owner-sensitive candidate requires approved recipe: "+name);
     return null;
   }

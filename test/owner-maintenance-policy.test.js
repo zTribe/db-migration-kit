@@ -51,7 +51,7 @@ test("Owner recipe enforces actual SQL order, single grants and quoted-literal i
  assert.throws(()=>policy.forCandidate("approved",baseSql.replace(
    "SET LOCAL ROLE "+role+";","SET LOCAL ROLE untrusted; SET LOCAL ROLE "+role+";"
  )),/exactly one/);
- assert.equal(policy.forCandidate("approved",baseSql+" SELECT 'GRANT other TO current_user; ALTER TABLE app.rogue';").mode,"set-role");
+ assert.throws(()=>policy.forCandidate("approved",baseSql+" SELECT 'GRANT other TO current_user; ALTER TABLE app.rogue';"),/forbids extra SQL statement/);
  assert.equal(policy.forCandidate("approved",baseSql+" -- SET ROLE attacker; GRANT attacker TO current_user;").mode,"set-role");
 });
 
@@ -93,4 +93,32 @@ test("trusted Supabase BYPASSRLS non-superuser can perform scoped owner maintena
  const lease=await acquireTemporaryOwnerRole(db,{role:"chat_api_runtime_owner",schema:"app"});
  assert.equal(lease.added,true);
  await releaseTemporaryOwnerRole(db,lease);
+});
+
+test("approved Owner recipe cannot smuggle arbitrary dynamic DDL in DO / CALL / SELECT",()=>{
+ const policy=createOwnerMaintenancePolicy({recipes:[
+  {name:"approved",role:"chat_api_runtime_owner",schema:"app",functionName:"approved",mode:"set-role"}
+ ]});
+ const base="GRANT CREATE ON SCHEMA app TO chat_api_runtime_owner; SET LOCAL ROLE chat_api_runtime_owner; "+
+  "CREATE OR REPLACE FUNCTION app.approved() RETURNS int LANGUAGE sql AS 'SELECT 1'; "+
+  "RESET ROLE; REVOKE CREATE ON SCHEMA app FROM chat_api_runtime_owner;";
+ for(const extra of [
+  "DO $$ BEGIN EXECUTE 'DROP TABLE app.messages'; END $$;",
+  "CALL app.untrusted();",
+  "SELECT app.privileged_write();",
+  "TRUNCATE app.messages;",
+ ]) assert.throws(()=>policy.forCandidate("approved",base+" "+extra),/forbids extra SQL statement/);
+});
+test("explicitly versioned historic DO check stays compatible, but never permits a new AI candidate",()=>{
+ const version="20261120163709_realtime_outbox_claim_owner_fix";
+ const policy=createOwnerMaintenancePolicy({legacyThrough:"20261120160111_old",legacyDoVersions:[version],recipes:[
+  {name:"realtime_outbox_claim_owner_fix",role:"chat_api_runtime_owner",schema:"app",functionName:"claim_realtime_events",mode:"set-role",version}
+ ]});
+ const migration="DO $$ BEGIN IF NOT pg_has_role(current_user,'chat_api_runtime_owner','SET') THEN RAISE EXCEPTION 'missing'; END IF; END $$; "+
+  "GRANT CREATE ON SCHEMA app TO chat_api_runtime_owner; SET LOCAL ROLE chat_api_runtime_owner; "+
+  "CREATE OR REPLACE FUNCTION app.claim_realtime_events() RETURNS int LANGUAGE sql AS 'SELECT 1'; "+
+  "RESET ROLE; REVOKE CREATE ON SCHEMA app FROM chat_api_runtime_owner;";
+ assert.equal(policy.forMigration({version,sql:migration}).role,"chat_api_runtime_owner");
+ assert.throws(()=>policy.forCandidate("realtime_outbox_claim_owner_fix",migration),/forbids extra SQL statement/);
+ assert.throws(()=>policy.forMigration({version:"20261122120000_realtime_outbox_claim_owner_fix",sql:migration}),/forbids extra SQL statement/);
 });

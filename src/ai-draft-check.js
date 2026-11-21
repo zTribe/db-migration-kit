@@ -45,6 +45,9 @@ export async function checkAiMigrationDraft({name, sql, ownerConfig, analyzer = 
     if(/\b(?:create\s+or\s+replace|alter|drop)\s+function\b/i.test(structural))
       add("review","FUNCTION_OWNER","Function DDL may require privileges held by an existing owner.",
         "Inspect function signature, owner, schema CREATE and role SET/ADMIN privileges in the PG17 fixture.");
+    if(/\\b(?:do|call)\\s+(?:\\$|[a-z_])/i.test(structural))
+      add("review","DYNAMIC_SQL","Dynamic SQL or procedure calls prevent complete static capability verification.",
+        "Review the exact DO/CALL body, affected objects and owner/RLS rights; add real PG17 negative and positive assertions.");
     if(/\b(?:drop\s+(?:table|schema)|truncate\s+table|delete\s+from)\b/i.test(structural))
       add("review","DATA_CHANGE","Destructive or bulk data changes require explicit review.",
         "Review locks, data retention, backup, compatibility and rollback/compensation.");
