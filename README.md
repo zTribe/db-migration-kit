@@ -82,6 +82,24 @@ Indexer-style counter examples. This is policy/adapter infrastructure,
 non-superuser upgrade and a target-specific read-only preflight can confirm
 a real deployment path.
 
+## Future-migration relation capability preflight
+
+Services may set `capabilityRelationPreflightAfter` in their own
+`db/migration-kit.config.json` to the exact **last legacy migration version**.
+The Kit validates this version exists and, for migrations after it, checks
+`CREATE TABLE / VIEW / SEQUENCE` schema CREATE rights and the actual
+`pg_catalog` ownership of common `ALTER/DROP TABLE`, trigger, policy,
+index and view changes. It rejects unqualified object names and unsupported
+forms instead of guessing. Existing historical SQL before or at the boundary
+is unchanged. Owner recipes remain separately reviewed.
+
+This check does **not** execute SQL or inspect arbitrary dynamic `DO`,
+complex extension DDL, function-body mutations or all PostgreSQL ownership
+operations. It cannot guarantee permission success: PG17 full-history and
+non-superuser upgrade replay (including ACL/RLS and failure rollback) must
+still run before deployment. It is intentionally an early diagnostic, never
+a replacement for the actual migration or live target identity check.
+
 ## Library capabilities
 
 - Explicit, ordered migration manifests and SHA-256 checksums.
