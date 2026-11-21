@@ -15,12 +15,20 @@ export function safeTestEnvironment(input,extras={}) {
   for(const key of SCRUB)delete safe[key];
   return {...safe,...extras};
 }
-export function confirmTargetedFixtureRan(output,project) {
+export function confirmTargetedFixtureRan(output,project,expectedNamePattern) {
   const tests=/# tests\s+(\d+)\b/.exec(output);
   const passed=/# pass\s+(\d+)\b/.exec(output);
   const failed=/# fail\s+(\d+)\b/.exec(output);
+  const message="Migration fixture for "+project+
+    " did not execute and pass the required targeted test; check --test-name-pattern and skip guards";
   if(!tests||!passed||!failed||Number(tests[1])===0||
       Number(passed[1])===0||Number(failed[1])!==0)
-    throw Error("Migration fixture for "+project+
-      " did not execute and pass any targeted tests; check --test-name-pattern and skip guards");
+    throw Error(message);
+  if(typeof expectedNamePattern!=="string"||!expectedNamePattern.startsWith("^") ||
+      expectedNamePattern.length<4)
+    throw Error("A bounded, anchored migration fixture test pattern is required");
+  const expected=new RegExp(expectedNamePattern);
+  const statusLines=[...output.matchAll(/^ok\s+\d+\s+-\s+([^\r\n]+)$/gm)];
+  if(!statusLines.some(match=>expected.test(match[1])&&!/\s+#\s+SKIP\b/i.test(match[1])))
+    throw Error(message);
 }

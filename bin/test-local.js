@@ -57,7 +57,7 @@ async function runFixture(extraEnv = {}) {
     if(result.error)throw result.error;
     if(result.status!==0)throw Error("Migration fixture failed for "+project+"; exit="+(result.status??result.signal)+"\n"+
       (result.stderr??"").slice(-2000)+"\n"+(result.stdout??"").slice(-2500));
-    confirmTargetedFixtureRan(result.stdout??"",project);
+    confirmTargetedFixtureRan(result.stdout??"",project,pattern);
   } catch (error) {
     primaryFailure = error;
     throw error;
