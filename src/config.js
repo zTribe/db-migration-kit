@@ -34,6 +34,15 @@ export async function loadMigrationConfig(path) {
     throw new Error("Invalid serviceOnlyFunctions configuration");
   }
   const manifest = await loadManifest(config);
+  if (config.capabilityRelationPreflightAfter !== undefined) {
+    const boundary = config.capabilityRelationPreflightAfter;
+    if (typeof boundary !== "string" ||
+        !/^(?:\\d{3}|\\d{14})_[a-z0-9_]+$/.test(boundary) ||
+        !manifest.some(migration => migration.version === boundary) ||
+        config.capabilityPreflight === false) {
+      throw new Error("Invalid future relation capability preflight boundary");
+    }
+  }
   if (config.historicalManifest !== undefined) {
     const historical = JSON.parse(await readFile(resolve(root, config.historicalManifest), "utf8"));
     if (!historical || typeof historical !== "object" || Array.isArray(historical)) throw new Error("Invalid historical manifest");
