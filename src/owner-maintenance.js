@@ -172,7 +172,7 @@ export function createOwnerMaintenancePolicy({recipes=[],legacyThrough="",legacy
     } else if(notices.length) {
       throw Error("owner policy forbids unreviewed notification");
     }
-    
+
     if(rule.mode==="set-role") {
       if(sets.length!==1||resets.length!==1||
           sets[0][1].toLowerCase()!==rule.role)
