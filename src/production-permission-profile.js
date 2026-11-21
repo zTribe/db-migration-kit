@@ -136,8 +136,61 @@ export function renderDisposableRoleSetup(profile){
     role.rolname+"') THEN CREATE ROLE "+q(role.rolname)+" NOLOGIN; END IF; END $kit_role$;");
   sql.push("ALTER ROLE "+q(role.rolname)+" "+opts.join(" ")+";");
  }
+ for(const m of profile.memberships){
+  // Remove any historical, possibly more permissive membership before replaying
+  // the reviewed Production ADMIN/INHERIT/SET options in the disposable fixture.
+  sql.push("REVOKE "+q(m.parent)+" FROM "+q(m.member)+";");
+ }
  for(const m of profile.memberships)sql.push("GRANT "+q(m.parent)+" TO "+q(m.member)+
   " WITH ADMIN "+(m.admin_option?"TRUE":"FALSE")+", INHERIT "+(m.inherit_option?"TRUE":"FALSE")+
   ", SET "+(m.set_option?"TRUE":"FALSE")+";");
  return sql.join("\n")+"\n";
+}
+
+/** Deterministic fixture ACL SQL. Pure generator: never executes or connects online. */
+export function renderDisposableAclSetup(profile){
+ if(profile.schemaVersion!==1||profile.source!=="production")
+  throw Error("A reviewed Production-only fixture is required");
+ const id=name=>{if(!VALID.test(name))throw Error("Unsafe fixture ACL identifier");return '"'+name+'"';};
+ const parse=entry=>{
+  const match=/^([a-z_0-9]*)=([a-zA-Z]+)\/([a-z_][a-z0-9_]*)$/.exec(entry);
+  if(!match)throw Error("Unsupported fixture ACL entry");
+  return {who:match[1],flags:match[2],grantor:match[3]};
+ };
+ const lines=[];
+ // Never use an online connection for this script. Run ONLY in a disposable
+ // Docker PG17 container as a separately authenticated bootstrap superuser.
+ for(const entry of profile.databaseRights.acl){
+  const {who,flags}=parse(entry);
+  const grantee=who?id(who):"PUBLIC";
+  const rights=flags.split("").map(ch=>({C:"CREATE",T:"TEMPORARY",c:"CONNECT"})[ch]);
+  if(rights.some(x=>!x))throw Error("Unsupported database ACL flags");
+  lines.push("DO $kit_db$ BEGIN EXECUTE format('REVOKE ALL PRIVILEGES ON DATABASE %I FROM "+grantee+"',current_database()); END $kit_db$;");
+  if(rights.length)lines.push("DO $kit_db$ BEGIN EXECUTE format('GRANT "+rights.join(",")+" ON DATABASE %I TO "+grantee+"',current_database()); END $kit_db$;");
+ }
+ const roles=profile.roles.map(r=>r.rolname);
+ // Production explicitly omits DB CREATE for Indexer runtime; eliminate any
+ // replay-only grant instead of silently keeping that stronger local privilege.
+ for(const role of roles){
+  if(profile.databaseRights.acl.some(x=>x.startsWith(role+"=")))continue;
+  lines.push("DO $kit_db$ BEGIN EXECUTE format('REVOKE ALL PRIVILEGES ON DATABASE %I FROM "+id(role)+"',current_database()); END $kit_db$;");
+ }
+ for(const s of profile.schemaRights){
+  if(!VALID.test(s.name)||!VALID.test(s.owner)||!Array.isArray(s.acl))
+   throw Error("Invalid schema fixture");
+  const schema=id(s.name);
+  lines.push("REVOKE ALL PRIVILEGES ON SCHEMA "+schema+" FROM PUBLIC;");
+  for(const entry of s.acl){
+   const {who,flags}=parse(entry),grantee=who?id(who):"PUBLIC";
+   const rights=flags.split("").map(ch=>({U:"USAGE",C:"CREATE"})[ch]);
+   if(rights.some(x=>!x))throw Error("Unsupported schema ACL flags");
+   lines.push("REVOKE ALL PRIVILEGES ON SCHEMA "+schema+" FROM "+grantee+";");
+   if(rights.length)lines.push("GRANT "+rights.join(",")+" ON SCHEMA "+schema+" TO "+grantee+";");
+  }
+  for(const role of roles){
+   if(s.acl.some(x=>x.startsWith(role+"=")))continue;
+   lines.push("REVOKE ALL PRIVILEGES ON SCHEMA "+schema+" FROM "+id(role)+";");
+  }
+ }
+ return lines.join("\n")+"\n";
 }

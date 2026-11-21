@@ -91,3 +91,5 @@ export function compareProductionPermissionProfiles(expected:ProductionPermissio
 export function assertProductionPermissionProfile(profile:ProductionPermissionProfile,state:any):{ok:boolean;findings:any[];limitations:string};
 export function verifyProductionPermissionFixture(client:any,profile:ProductionPermissionProfile):Promise<{ok:boolean;findings:any[];limitations:string}>;
 export function renderDisposableRoleSetup(profile:ProductionPermissionProfile):string;
+
+export function renderDisposableAclSetup(profile:ProductionPermissionProfile):string;

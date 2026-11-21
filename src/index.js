@@ -30,3 +30,5 @@ export { auditRpcTableDependenciesAst } from "./rpc-table-dependencies-ast.js";
 
 export { deriveProductionPermissionProfile, projectPermissionCatalog, compareProductionPermissionProfiles,
  assertProductionPermissionProfile, verifyProductionPermissionFixture, renderDisposableRoleSetup } from "./production-permission-profile.js";
+
+export { renderDisposableAclSetup } from "./production-permission-profile.js";
