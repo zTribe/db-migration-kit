@@ -9,6 +9,7 @@ export async function withMigrationLock(pool, options, work) {
       !Number.isSafeInteger(lockPollMs) || lockPollMs < 1) throw new Error("invalid migration lock timing");
   const client = await pool.connect();
   let held = false;
+  let failure;
   const started = Date.now();
   try {
     do {
@@ -24,6 +25,9 @@ export async function withMigrationLock(pool, options, work) {
       await new Promise(resolve => setTimeout(resolve, Math.min(lockPollMs, lockWaitMs)));
     } while (!held);
     return await work(client);
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
     if (held) {
       await client.query(
@@ -31,6 +35,6 @@ export async function withMigrationLock(pool, options, work) {
         [lockName],
       ).catch(() => undefined);
     }
-    client.release();
+    client.release(failure);
   }
 }
