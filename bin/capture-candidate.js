@@ -1,6 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { normalizeMigrationRole, planMigration, readTargetState } from "../src/index.js";
 import { assertManagedTransaction } from "../src/transaction-sql.js";
+import { createOwnerMaintenancePolicy, acquireTemporaryOwnerRole, releaseTemporaryOwnerRole } from "../src/owner-maintenance.js";
+import { preflightMigrationCapabilities } from "../src/capability.js";
+import { preflightRelationCapabilities } from "../src/relation-capability.js";
+import { resolve } from "node:path";
 
 // Called by a consumer's upgrade fixture after provisioning its migration role.
 export async function captureCandidate(migrator, schemas) {
@@ -20,7 +24,21 @@ export async function captureCandidate(migrator, schemas) {
     }
     const capture = async () => normalizeMigrationRole(await readTargetState(client, schemas), role.rolname);
     const before = await capture();
-    await client.query(sql);
+    const name = process.env.MIGRATION_CANDIDATE_NAME;
+    if (!name) throw Error("Candidate migration name missing; use the Kit prepare command");
+    const policy = createOwnerMaintenancePolicy(JSON.parse(
+      await readFile(resolve("db/owner-maintenance-policy.json"),"utf8")));
+    const recipe = policy.forCandidate(name,sql);
+    const lease = recipe ? await acquireTemporaryOwnerRole(client,recipe) : null;
+    try {
+      await preflightMigrationCapabilities(client,sql,{future:true});
+      await preflightRelationCapabilities(client,sql);
+      await client.query(sql);
+      if(lease)await releaseTemporaryOwnerRole(client,lease);
+    } catch(error) {
+      // Outer transaction rolls back any role grant and DDL together.
+      throw error;
+    }
     const after = await capture();
     const plan = planMigration(before, after);
     if (!plan.structure.length && !plan.changes.length) {
