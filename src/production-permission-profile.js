@@ -92,7 +92,7 @@ async function readProductionCatalog(client,schemas,roles,project){
  const functions=await query(
   "SELECT n.nspname AS schema_name,p.proname AS name,pg_catalog.pg_get_function_identity_arguments(p.oid) AS arguments,pg_catalog.pg_get_userbyid(p.proowner) AS owner,p.prosecdef AS security_definer,p.proconfig AS function_settings,p.proacl::text AS acl,md5(pg_catalog.pg_get_functiondef(p.oid)) AS definition_hash FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=ANY($1::text[]) AND p.prokind IN ('f','p')",[schemas]);
  const policies=await query(
-  "SELECT schemaname,tablename,policyname,permissive,roles,cmd,md5(coalesce(qual,'')) AS using_hash,md5(coalesce(with_check,'')) AS check_hash FROM pg_catalog.pg_policies WHERE schemaname=ANY($1::text[])",[schemas]);
+  // pg_policies.roles is name[] (OID 1003); node-postgres does not parse it\n  // into JS arrays by default. Cast to text[] (OID 1009), which its built-in\n  // parser decodes to the same array shape as Supabase JSON exports.\n  "SELECT schemaname,tablename,policyname,permissive,roles::text[] AS roles,cmd,md5(coalesce(qual,'')) AS using_hash,md5(coalesce(with_check,'')) AS check_hash FROM pg_catalog.pg_policies WHERE schemaname=ANY($1::text[])",[schemas]);
  const ledgerSchema=project==="chat"?"app":project==="indexer"?"chain":null;
  if(!ledgerSchema)throw Error("Invalid Production project");
  const migration_ledger=await query(
