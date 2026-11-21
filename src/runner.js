@@ -5,6 +5,7 @@ import { withMigrationLock } from "./lock.js";
 import { hardenMigrationLedger } from "./ledger-security.js";
 import { autoBaselineVerifiedCatalog, preflightAutoBaselineCatalog } from "./auto-baseline.js";
 import { preflightMigrationCapabilities } from "./capability.js";
+import { preflightRelationCapabilities } from "./relation-capability.js";
 
 const DEFAULTS = {
   schema: "public",
@@ -132,7 +133,11 @@ export async function applyMigrations(pool, options) {
       if (nonTransactional) {
         if (guard) throw new Error("Guarded migrations must be transactional");
         if (config.allowNonTransactional !== true) throw new Error(`non-transactional migration ${migration.version} requires explicit allowNonTransactional=true; partial execution cannot be rolled back`);
-        if (config.capabilityPreflight !== false) await preflightMigrationCapabilities(client, migration.sql);
+        if (config.capabilityPreflight !== false) {
+          await preflightMigrationCapabilities(client, migration.sql);
+          if (config.capabilityRelationPreflightAfter && migration.version > config.capabilityRelationPreflightAfter)
+            await preflightRelationCapabilities(client, migration.sql);
+        }
         if (typeof config.beforeMigration === "function") await config.beforeMigration(client, migration, config);
         await client.query(migration.sql);
         await client.query(
@@ -145,7 +150,11 @@ export async function applyMigrations(pool, options) {
           // Capture the real catalog before any temporary Owner membership.
           if (guard) await guard.before(client, migration);
           if (typeof config.beforeTransactionalPreflight === "function") await config.beforeTransactionalPreflight(client, migration, config);
-          if (config.capabilityPreflight !== false) await preflightMigrationCapabilities(client, migration.sql);
+          if (config.capabilityPreflight !== false) {
+          await preflightMigrationCapabilities(client, migration.sql);
+          if (config.capabilityRelationPreflightAfter && migration.version > config.capabilityRelationPreflightAfter)
+            await preflightRelationCapabilities(client, migration.sql);
+        }
           if (typeof config.beforeMigration === "function") await config.beforeMigration(client, migration, config);
           await client.query(migration.sql);
           if (typeof config.afterTransactionalMigration === "function") await config.afterTransactionalMigration(client, migration, config);

@@ -8,7 +8,7 @@ const FUNCTION_DDL = /\b(?:create\s+(?:or\s+replace\s+)?|alter\s+|drop\s+)functi
  * Preserve SQL offsets while hiding quoted strings, dollar-quoted PL/pgSQL
  * bodies and comments. Owner authorization must never be matched inside data.
  */
-function structuralSql(sql) {
+export function structuralSql(sql) {
   const out = sql.split("");
   const mask = (a, b) => {
     for (let k = a; k < b; k++) if (!/\s/.test(out[k])) out[k] = " ";
