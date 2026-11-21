@@ -4,7 +4,72 @@
  */
 const ID = /^[a-z_][a-z0-9_]*$/;
 const FUNCTION_DDL = /\b(?:create\s+(?:or\s+replace\s+)?|alter\s+|drop\s+)function\s+((?:[a-z_][a-z0-9_]*\.)?[a-z_][a-z0-9_]*)\s*\(/ig;
-const strip = sql => sql.replace(/--[^\r\n]*/g,"").replace(/\/\*[\s\S]*?\*\//g,"");
+/**
+ * Preserve SQL offsets while hiding quoted strings, dollar-quoted PL/pgSQL
+ * bodies and comments. Owner authorization must never be matched inside data.
+ */
+function structuralSql(sql) {
+  const out = sql.split("");
+  const mask = (a, b) => {
+    for (let k = a; k < b; k++) if (!/\s/.test(out[k])) out[k] = " ";
+  };
+  let i = 0;
+  while (i < sql.length) {
+    const start = i;
+    if (sql.startsWith("--", i)) {
+      i = sql.indexOf("\n", i);
+      if (i === -1) i = sql.length;
+      mask(start, i);
+      continue;
+    }
+    if (sql.startsWith("/*", i)) {
+      i += 2;
+      let depth = 1;
+      while (depth && i < sql.length) {
+        if (sql.startsWith("/*", i)) { depth++; i += 2; }
+        else if (sql.startsWith("*/", i)) { depth--; i += 2; }
+        else i++;
+      }
+      if (depth) throw Error("unclosed SQL block comment in owner policy");
+      mask(start, i);
+      continue;
+    }
+    if (sql[i] === "'" || sql[i] === '"') {
+      const quote = sql[i];
+      const escapeString = quote === "'" && /[eE]/.test(sql[i - 1] ?? "") &&
+        (i < 2 || !/[a-z0-9_$]/i.test(sql[i - 2]));
+      i++;
+      let closed = false;
+      while (i < sql.length) {
+        if (escapeString && sql[i] === "\\") { i += 2; continue; }
+        if (sql[i] === quote) {
+          if (sql[i + 1] === quote) { i += 2; continue; }
+          i++;
+          closed = true;
+          break;
+        }
+        i++;
+      }
+      if (!closed) throw Error("unclosed SQL quoted literal in owner policy");
+      mask(start, i);
+      continue;
+    }
+    if (sql[i] === "$") {
+      const tagged = /^(?:\$\$|\$[a-z_][a-z_0-9]*\$)/i.exec(sql.slice(i));
+      if (tagged) {
+        const tag = tagged[0];
+        const end = sql.indexOf(tag, i + tag.length);
+        if (end < 0) throw Error("unclosed SQL dollar body in owner policy");
+        i = end + tag.length;
+        mask(start, i);
+        continue;
+      }
+    }
+    i++;
+  }
+  return out.join("");
+}
+const strip = structuralSql;
 const ident = s => { if(typeof s!=="string" || !ID.test(s)) throw Error("invalid owner policy identifier"); return s; };
 const qi = s => '"' + ident(s) + '"';
 const esc = s => s.replace(/[.*+?^$()|[\]{}]/g,"\\$&");
@@ -26,23 +91,46 @@ export function createOwnerMaintenancePolicy({recipes=[],legacyThrough=""}={}) {
   function verify(sql,rule) {
     if(typeof sql!=="string"||!sql.trim()) throw Error("owner maintenance requires reviewed SQL");
     const body=strip(sql),target=rule.schema+"."+rule.functionName;
-    const functions=[...body.matchAll(FUNCTION_DDL)].map(m=>m[1].toLowerCase());
-    if(!functions.length || functions.some(fn=>fn!==target) || /\bdrop\s+function\b/i.test(body))
+    const functions=[...body.matchAll(FUNCTION_DDL)];
+    if(!functions.length||functions.some(m=>m[1].toLowerCase()!==target)||
+        /\bdrop\s+function\b/i.test(body))
       throw Error("owner policy unexpected function DDL: "+target);
+    // A reviewed Owner recipe must be limited to its approved function,
+    // never a convenient escape hatch for unrelated schema/role operations.
+    if(/\b(?:create\s+(?:or\s+replace\s+)?|alter\s+|drop\s+)(?:table|view|materialized\s+view|index|trigger|policy|role|schema|extension|sequence)\b/i.test(body))
+      throw Error("owner policy forbids unrelated object DDL");
     const role=esc(rule.role),schema=esc(rule.schema),fn=esc(target);
-    if(new RegExp("\\b(?:grant\\s+"+role+"\\s+to|alter\\s+role\\s+"+role+")\\b","i").test(body))
-      throw Error("owner policy forbids SQL role grants");
-    const grant=new RegExp("\\bgrant\\s+create\\s+on\\s+schema\\s+"+schema+"\\s+to\\s+"+role+"\\s*;","i");
-    const revoke=new RegExp("\\brevoke\\s+create\\s+on\\s+schema\\s+"+schema+"\\s+from\\s+"+role+"\\s*;","i");
-    if(!grant.test(body)||!revoke.test(body)||body.search(grant)>body.search(revoke))
-      throw Error("owner policy requires temporary CREATE grant and revoke");
+    const grantPattern=new RegExp("\\bgrant\\s+create\\s+on\\s+schema\\s+"+schema+"\\s+to\\s+"+role+"\\s*;","ig");
+    const revokePattern=new RegExp("\\brevoke\\s+create\\s+on\\s+schema\\s+"+schema+"\\s+from\\s+"+role+"\\s*;","ig");
+    const grants=[...body.matchAll(/\bgrant\b/ig)];
+    const revokes=[...body.matchAll(/\brevoke\b/ig)];
+    const grant=[...body.matchAll(grantPattern)],revoke=[...body.matchAll(revokePattern)];
+    if(grants.length!==1||revokes.length!==1||grant.length!==1||revoke.length!==1||
+        grant[0].index>=revoke[0].index)
+      throw Error("owner policy requires one ordered temporary CREATE grant and revoke");
+    const sets=[...body.matchAll(/\bset\s+(?:local\s+)?role\s+([a-z_][a-z_0-9]*)\s*;/ig)];
+    const resets=[...body.matchAll(/\breset\s+role\s*;/ig)];
+    const firstFunction=functions[0].index,lastFunction=functions.at(-1).index;
     if(rule.mode==="set-role") {
-      if(!new RegExp("\\bset\\s+local\\s+role\\s+"+role+"\\s*;","i").test(body)||!/\breset\s+role\s*;/i.test(body))
-        throw Error("owner policy requires SET LOCAL ROLE and RESET ROLE");
-    } else if(!new RegExp("\\balter\\s+function\\s+"+fn+"\\s*\\([^;]*\\)\\s+owner\\s+to\\s+"+role+"\\s*;","i").test(body))
-      throw Error("owner policy requires restricted function owner transfer");
+      if(sets.length!==1||resets.length!==1||
+          sets[0][1].toLowerCase()!==rule.role)
+        throw Error("owner policy requires exactly one SET LOCAL ROLE and RESET ROLE");
+      if(!/\bset\s+local\s+role\b/i.test(sets[0][0])||
+          !(grant[0].index<sets[0].index&&sets[0].index<firstFunction&&
+            lastFunction<resets[0].index&&resets[0].index<revoke[0].index)||
+          /\bowner\s+to\b/i.test(body))
+        throw Error("owner policy SET LOCAL ROLE / RESET ROLE must enclose only the reviewed function DDL");
+    } else {
+      if(sets.length||resets.length) throw Error("owner transfer recipe forbids SET/RESET ROLE");
+      const transfers=[...body.matchAll(new RegExp("\\balter\\s+function\\s+"+fn+"\\s*\\([^;]*\\)\\s+owner\\s+to\\s+"+role+"\\s*;","ig"))];
+      if(transfers.length!==1||!functions.some(m=>m.index<transfers[0].index&&
+          /\bcreate\b/i.test(m[0]))||
+          !(grant[0].index<firstFunction&&transfers[0].index<revoke[0].index))
+        throw Error("owner policy requires restricted function owner transfer before CREATE revoke");
+    }
     return rule;
   }
+
   function forMigration(migration) {
     const v=migration?.version||"";
     const rule=[...entries.values()].find(r=>r.version===v||

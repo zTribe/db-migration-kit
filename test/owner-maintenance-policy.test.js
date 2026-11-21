@@ -31,6 +31,38 @@ test("Indexer counter-based policy uses the same Kit engine",()=>{
  assert.throws(()=>indexer.forCandidate("unknown",body),/approved recipe/);
  assert.throws(()=>indexer.forCandidate("read_v2",body.replace("RESET ROLE;","")),/RESET ROLE/);
 });
+
+test("Owner recipe enforces actual SQL order, single grants and quoted-literal immunity",()=>{
+ const role="chat_api_runtime_owner";
+ const baseSql="GRANT CREATE ON SCHEMA app TO "+role+"; SET LOCAL ROLE "+role+"; "+
+   "CREATE OR REPLACE FUNCTION app.approved() RETURNS integer LANGUAGE sql AS 'select 1'; "+
+   "RESET ROLE; REVOKE CREATE ON SCHEMA app FROM "+role+";";
+ const policy=createOwnerMaintenancePolicy({recipes:[{
+   name:"approved",role,schema:"app",functionName:"approved",mode:"set-role"
+ }]});
+ assert.equal(policy.forCandidate("approved",baseSql).mode,"set-role");
+ const revoke="REVOKE CREATE ON SCHEMA app FROM "+role+";";
+ const wrongOrder=baseSql.replace("RESET ROLE; "+revoke,revoke+" RESET ROLE;");
+ assert.throws(()=>policy.forCandidate("approved",wrongOrder),/enclose only/);
+ assert.throws(()=>policy.forCandidate("approved",revoke+" "+baseSql),/one ordered/);
+ assert.throws(()=>policy.forCandidate("approved",baseSql.replace(
+   "CREATE OR REPLACE FUNCTION","CREATE TABLE app.rogue(id int); CREATE OR REPLACE FUNCTION"
+ )),/unrelated object DDL/);
+ assert.throws(()=>policy.forCandidate("approved",baseSql.replace(
+   "SET LOCAL ROLE "+role+";","SET LOCAL ROLE untrusted; SET LOCAL ROLE "+role+";"
+ )),/exactly one/);
+ assert.equal(policy.forCandidate("approved",baseSql+" SELECT 'GRANT other TO current_user; ALTER TABLE app.rogue';").mode,"set-role");
+ assert.equal(policy.forCandidate("approved",baseSql+" -- SET ROLE attacker; GRANT attacker TO current_user;").mode,"set-role");
+});
+
+test("Owner transfer demands ordered CREATE, ALTER OWNER and REVOKE",()=>{
+ const misplaced=sql.replace(
+   "ALTER FUNCTION app.list_v1() OWNER TO chat_api_runtime_owner;",
+   "REVOKE CREATE ON SCHEMA app FROM chat_api_runtime_owner; ALTER FUNCTION app.list_v1() OWNER TO chat_api_runtime_owner;"
+ ).replace(/REVOKE CREATE ON SCHEMA app FROM chat_api_runtime_owner;$/, "");
+ assert.throws(()=>chat.forCandidate("list_v1",misplaced),/transfer before CREATE revoke/);
+});
+
 function fake({admin=false,canSet=false,inherited=false,bypassRls=false}={}) {
  const queries=[];let roleSet=canSet;
  return {queries,async query(sql,args=[]) {
