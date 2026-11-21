@@ -45,3 +45,20 @@ test("future function checks ignore quoted SQL content",async()=>{
  await preflightMigrationCapabilities({async query(){throw Error("catalog must not be accessed");}},
    "SELECT 'CREATE OR REPLACE FUNCTION app.ghost()'; -- ALTER FUNCTION app.ghost()",{future:true});
 });
+
+test("future planned schema CREATE GRANT needs real GRANT OPTION and correct order",async()=>{
+ const sql="GRANT CREATE ON SCHEMA app TO chat_api_runtime_owner; "+
+   "SET LOCAL ROLE chat_api_runtime_owner; "+fn+" RESET ROLE;";
+ const mock=(grantable)=>({async query(statement,args=[]) {
+   if(statement.includes("current_user as role"))return{rows:[{role:"kit_migrator",superuser:false}]};
+   if(statement.includes("CREATE WITH GRANT OPTION"))return{rows:[{can_grant:grantable}]};
+   if(statement.includes("has_schema_privilege"))return{rows:[{can_create:args[0]==="kit_migrator"}]};
+   if(statement.includes("select pg_catalog.pg_has_role"))return{rows:[{can_set:true}]};
+   if(statement.includes("owner_role.oid"))return{rows:[{owner:"chat_api_runtime_owner",signature:"app.claim_realtime_events(integer,integer)",can_alter:false,can_set:true}]};
+   throw Error("unexpected query "+statement);
+ }});
+ await assert.rejects(preflightMigrationCapabilities(mock(false),sql,{future:true}),/cannot grant CREATE/);
+ await preflightMigrationCapabilities(mock(true),sql,{future:true});
+ const wrongOrder="SET LOCAL ROLE chat_api_runtime_owner; "+fn+" GRANT CREATE ON SCHEMA app TO chat_api_runtime_owner; RESET ROLE;";
+ await assert.rejects(preflightMigrationCapabilities(mock(true),wrongOrder,{future:true}),/lacks CREATE/);
+});
