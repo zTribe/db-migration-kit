@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
 import { checkAiMigrationDraft } from "../src/ai-draft-check.js";
 import { explainPrepareFailure } from "../src/prepare-errors.js";
+import { safeTestEnvironment, confirmTargetedFixtureRan } from "../src/fixture-process.js";
 
 const [mode, project, ref = "HEAD", output, migrationName, reason, checksPath] = process.argv.slice(2);
 if (!["upgrade", "full", "snapshot", "prepare"].includes(mode) || !["chat", "indexer"].includes(project)) {
@@ -20,28 +21,7 @@ const docker = (...args) => execFileSync("docker", args, { encoding: "utf8" }).t
 const pattern = mode !== "full" ? "^PR migrations upgrade" :
   project === "chat" ? "^shared migration runner applies the full" : "^Indexer replays the full";
 const file = project === "chat" ? "test/chat-migrate.integration.test.mjs" : "test/migration-runner.integration.mjs";
-const safeTestEnvironment = extras => {
-  const safe={...process.env};
-  for(const key of [
-    "DATABASE_URL","MIGRATION_DATABASE_URL","CHAT_MIGRATION_DATABASE_URL",
-    "CHAT_MIGRATION_DATABASE_URL_DIRECT","CHAT_DATABASE_URL","CHAT_DB_URL",
-    "INDEXER_DATABASE_URL","INDEXER_DATABASE_URL_DIRECT","INDEXER_TEST_DATABASE_URL",
-    "INDEXER_UPGRADE_DATABASE_URL","CHAT_TEST_DATABASE_URL",
-    "MAIN_MIGRATION_AUDIT_DATABASE_URL","SUPABASE_DB_URL","SUPABASE_DATABASE_URL",
-    "PGHOST","PGHOSTADDR","PGPORT","PGUSER","PGPASSWORD","PGDATABASE",
-    "PGSERVICE","PGSERVICEFILE","PGPASSFILE","PGSSLMODE","PGSSLCERT","PGSSLKEY",
-    "PGSSLROOTCERT","MIGRATION_CANDIDATE_NAME","MIGRATION_CANDIDATE_CAPTURE",
-    "MIGRATION_CANDIDATE_SQL","MIGRATION_PREPARE_CHECKS","MIGRATION_CANDIDATE_MODULE"
-  ]) delete safe[key];
-  return {...safe,...extras};
-};
-export function confirmTargetedFixtureRan(output, project) {
-  const tests=/# tests\s+(\d+)\b/.exec(output);
-  const passed=/# pass\s+(\d+)\b/.exec(output);
-  const failed=/# fail\s+(\d+)\b/.exec(output);
-  if(!tests||!passed||!failed||Number(tests[1])===0||Number(passed[1])===0||Number(failed[1])!==0)
-    throw Error("Migration fixture for "+project+" did not execute and pass any targeted tests; check --test-name-pattern and skip guards");
-}
+
 
 async function runFixture(extraEnv = {}) {
   const name = "ztribe-migration-" + randomUUID();
@@ -58,7 +38,7 @@ async function runFixture(extraEnv = {}) {
     const port = docker("port", name, "5432/tcp").split(":").at(-1);
     if (!/^\d+$/.test(port)) throw new Error("Could not resolve the isolated PostgreSQL port");
     const url = "postgres://postgres:postgres@127.0.0.1:" + port + "/postgres";
-    const env=safeTestEnvironment({
+    const env=safeTestEnvironment(process.env,{
       CHAT_TEST_DATABASE_URL:url, INDEXER_UPGRADE_DATABASE_URL:url,
       MIGRATION_UPGRADE_BASE_SHA:base,
       MIGRATION_SNAPSHOT_OUTPUT:mode==="snapshot"?resolve(output??"before.json"):"",

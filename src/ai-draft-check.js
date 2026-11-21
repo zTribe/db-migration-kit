@@ -36,9 +36,12 @@ export async function checkAiMigrationDraft({name, sql, ownerConfig, analyzer = 
     if(/\bcreate\s+(?:unique\s+)?index\s+concurrently\b/i.test(structural))
       add("error","CONCURRENT_INDEX","Guarded transactional migrations cannot CREATE INDEX CONCURRENTLY.",
         "Use an explicitly reviewed nontransactional migration workflow.");
-    if(/\bsecurity\s+definer\b/i.test(structural) && !/\bset\s+search_path\s*=/i.test(structural))
-      add("error","DEFINER_PATH","SECURITY DEFINER needs an explicit fixed search_path.",
-        "Declare a trusted search_path and validate effective execute rights with PG17 tests.");
+    for(const statement of structural.split(";")) {
+      if(/\bsecurity\s+definer\b/i.test(statement) &&
+          !/\bset\s+search_path\s*(?:=|to)\s*/i.test(statement))
+        add("error","DEFINER_PATH","Each SECURITY DEFINER statement needs its own fixed search_path.",
+          "Add an explicit trusted search_path to this statement and verify caller permissions and pg_temp isolation in PG17.");
+    }
     if(/\b(?:create\s+or\s+replace|alter|drop)\s+function\b/i.test(structural))
       add("review","FUNCTION_OWNER","Function DDL may require privileges held by an existing owner.",
         "Inspect function signature, owner, schema CREATE and role SET/ADMIN privileges in the PG17 fixture.");
