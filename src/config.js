@@ -37,7 +37,7 @@ export async function loadMigrationConfig(path) {
   if (config.capabilityRelationPreflightAfter !== undefined) {
     const boundary = config.capabilityRelationPreflightAfter;
     if (typeof boundary !== "string" ||
-        !/^(?:\\d{3}|\\d{14})_[a-z0-9_]+$/.test(boundary) ||
+        !/^(?:\d{3}|\d{14})_[a-z0-9_]+$/.test(boundary) ||
         !manifest.some(migration => migration.version === boundary) ||
         config.capabilityPreflight === false) {
       throw new Error("Invalid future relation capability preflight boundary");
