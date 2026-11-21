@@ -200,3 +200,8 @@ npm exec -- db-migrate-kit draft-check --config=db/migration-kit.config.json --s
 ```
 
 This read-only preflight reports machine-readable issue `code`, `severity`, `message`, and `next` actions. It checks Owner recipes, transaction boundaries, SECURITY DEFINER paths and common migration hazards, and provides advisory PostgreSQL AST findings. No database connection or migration file is created. AI must fix errors and explicitly review warnings, then run `db-migrate-kit prepare` with PG17 non-superuser tests. `prepare` now invokes the same preflight before PG17 and before creating the official migration/sidecar. Never treat this preflight as deployment approval.
+
+
+### Owner-maintenance recipe statement boundary
+
+For new migration candidates, a reviewed Owner recipe authorizes **only** the temporary schema CREATE grant, local role switch, reviewed FUNCTION DDL, role reset and CREATE revoke, in approved order. Other statements (including DO/CALL/SELECT or dynamic DDL) are rejected. Keep unrelated SQL in an independently reviewed migration. `legacyDoVersions` is an explicit compatibility escape hatch for exact preexisting reviewed migration versions with immutable checksum protection; never enable it for new migration candidates. It applies only to historical forMigration() replay, not to new AI candidates. DO/CALL in ordinary candidates generates a manual-review diagnostic and must be validated against PG17.

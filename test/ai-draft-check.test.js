@@ -46,3 +46,9 @@ test("bad names and missing Owner policy fail closed",async()=>{
  assert.equal((await check("Bad Name","SELECT 1;")).ok,false);
  assert.equal((await check("ok","SELECT 1;",{ownerConfig:null})).ok,false);
 });
+
+test("opaque DO block produces a mandatory manual-review finding",async()=>{
+ const result=await check("runtime_check","DO $$ BEGIN EXECUTE 'ALTER TABLE app.messages DROP COLUMN id'; END $$;");
+ assert.equal(result.ok,true);
+ assert.ok(result.issues.some(x=>x.code==="DYNAMIC_SQL"&&x.severity==="review"));
+});
