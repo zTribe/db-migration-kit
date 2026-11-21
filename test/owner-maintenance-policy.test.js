@@ -31,11 +31,11 @@ test("Indexer counter-based policy uses the same Kit engine",()=>{
  assert.throws(()=>indexer.forCandidate("unknown",body),/approved recipe/);
  assert.throws(()=>indexer.forCandidate("read_v2",body.replace("RESET ROLE;","")),/RESET ROLE/);
 });
-function fake({admin=false,canSet=false,inherited=false}={}) {
+function fake({admin=false,canSet=false,inherited=false,bypassRls=false}={}) {
  const queries=[];let roleSet=canSet;
  return {queries,async query(sql,args=[]) {
   queries.push([sql,args]);
-  if(sql.includes("session_user AS login"))return{rows:[{role:"migrator",login:"migrator",rolsuper:false,rolbypassrls:false,inherited,can_set:roleSet,admin_option:admin,self_grant:false}]};
+  if(sql.includes("session_user AS login"))return{rows:[{role:"migrator",login:"migrator",rolsuper:false,rolbypassrls:bypassRls,inherited,can_set:roleSet,admin_option:admin,self_grant:false}]};
   if(sql.startsWith("GRANT ")){roleSet=true;return{rows:[]}};
   if(sql.startsWith("REVOKE ")){roleSet=false;return{rows:[]}};
   if(sql==="SELECT current_user AS login")return{rows:[{login:"migrator"}]};
@@ -54,4 +54,11 @@ test("role capability is temporary and refuses unapproved login",async()=>{
  await assert.rejects(acquireTemporaryOwnerRole(fake({admin:true,inherited:true}),{role:"indexer_api_read",schema:"api"}),/non-inheriting/);
  const existing=fake({canSet:true});
  assert.equal((await acquireTemporaryOwnerRole(existing,{role:"indexer_api_read",schema:"api"})).added,false);
+});
+
+test("trusted Supabase BYPASSRLS non-superuser can perform scoped owner maintenance",async()=>{
+ const db=fake({admin:true,bypassRls:true});
+ const lease=await acquireTemporaryOwnerRole(db,{role:"chat_api_runtime_owner",schema:"app"});
+ assert.equal(lease.added,true);
+ await releaseTemporaryOwnerRole(db,lease);
 });

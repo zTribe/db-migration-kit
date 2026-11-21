@@ -75,8 +75,8 @@ export async function acquireTemporaryOwnerRole(client,{role,schema}) {
     "EXISTS(SELECT FROM pg_auth_members m WHERE m.roleid=$1::regrole AND m.member=current_user::regrole AND m.admin_option) AS admin_option, "+
     "EXISTS(SELECT FROM pg_auth_members m WHERE m.roleid=$1::regrole AND m.member=current_user::regrole AND m.grantor=current_user::regrole) AS self_grant "+
     "FROM pg_roles r WHERE r.rolname=current_user",[role]);
-  if(!state||state.role!==state.login||state.rolsuper||state.rolbypassrls||state.inherited)
-    throw Error("owner maintenance requires non-superuser and non-inheriting migration login");
+  if(!state||state.role!==state.login||state.rolsuper||state.inherited)
+    throw Error("owner maintenance requires non-superuser migration login without inherited runtime owner");
   if(state.can_set) return Object.freeze({role,schema,added:false});
   if(!state.admin_option||state.self_grant) throw Error("owner maintenance missing external ADMIN OPTION");
   await client.query("GRANT "+qi(role)+" TO "+qi(state.role)+" WITH ADMIN FALSE, INHERIT FALSE, SET TRUE GRANTED BY "+qi(state.role));
