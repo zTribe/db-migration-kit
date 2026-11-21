@@ -122,3 +122,33 @@ test("explicitly versioned historic DO check stays compatible, but never permits
  assert.throws(()=>policy.forCandidate("realtime_outbox_claim_owner_fix",migration),/forbids extra SQL statement/);
  assert.throws(()=>policy.forMigration({version:"20261122120000_realtime_outbox_claim_owner_fix",sql:migration}),/forbids extra SQL statement|requires approved recipe/);
 });
+
+
+test("service-only reader recipe permits only its exact EXECUTE ACL and final PostgREST reload",()=>{
+ const policy=createOwnerMaintenancePolicy({recipes:[{
+   name:"admin_dead_letter_list_v1",role:"chat_api_runtime_owner",schema:"app",
+   functionName:"admin_list_realtime_dead_letters_v1",mode:"transfer",
+   serviceExecuteRole:"service_role",notifyPostgrest:true
+ }]});
+ const ddl="GRANT CREATE ON SCHEMA app TO chat_api_runtime_owner; "+
+   "CREATE FUNCTION app.admin_list_realtime_dead_letters_v1(p_page integer DEFAULT 0) "+
+   "RETURNS integer LANGUAGE sql AS 'SELECT 1'; "+
+   "REVOKE ALL ON FUNCTION app.admin_list_realtime_dead_letters_v1(integer) "+
+   "FROM PUBLIC, anon, authenticated, service_role; "+
+   "GRANT EXECUTE ON FUNCTION app.admin_list_realtime_dead_letters_v1(integer) TO service_role; "+
+   "ALTER FUNCTION app.admin_list_realtime_dead_letters_v1(integer) OWNER TO chat_api_runtime_owner; "+
+   "REVOKE CREATE ON SCHEMA app FROM chat_api_runtime_owner; "+
+   "NOTIFY pgrst, 'reload schema';";
+ assert.equal(policy.forCandidate("admin_dead_letter_list_v1",ddl).serviceExecuteRole,"service_role");
+ assert.throws(()=>policy.forCandidate("other",ddl),/approved recipe/);
+ assert.throws(()=>policy.forCandidate("admin_dead_letter_list_v1",ddl.replace(
+   "TO service_role;","TO authenticated;")) ,/forbids extra SQL statement|requires exact service EXECUTE/);
+ assert.throws(()=>policy.forCandidate("admin_dead_letter_list_v1",ddl.replace(
+   "REVOKE ALL ON FUNCTION","REVOKE EXECUTE ON FUNCTION")) ,/forbids extra SQL statement|requires exact service EXECUTE/);
+ assert.throws(()=>policy.forCandidate("admin_dead_letter_list_v1",ddl+" GRANT SELECT ON app.realtime_event_outbox TO service_role;"),
+   /forbids extra SQL statement/);
+ assert.throws(()=>policy.forCandidate("admin_dead_letter_list_v1",ddl.replace(
+   "NOTIFY pgrst, 'reload schema';","NOTIFY pgrst, 'bad';")),/final PostgREST/);
+ assert.throws(()=>policy.forCandidate("admin_dead_letter_list_v1",ddl.replace(
+   "REVOKE CREATE ON SCHEMA app FROM chat_api_runtime_owner;","")),/temporary CREATE/);
+});
