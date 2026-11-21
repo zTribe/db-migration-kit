@@ -62,7 +62,7 @@ test("Production policy roles are read as a real text[] array, not name[] text",
   if(sql.includes("FROM pg_catalog.pg_attribute"))return {rows:snapshot.column_acls};
   if(sql.includes("FROM pg_catalog.pg_proc"))return {rows:snapshot.functions};
   if(sql.includes("FROM pg_catalog.pg_policies")){
-   assert.match(sql,/roles::text\\[\\] AS roles/);
+   assert.match(sql,/roles::text\[\] AS roles/);
    lookedUpPolicy=true;
    return {rows:snapshot.policies};
   }
