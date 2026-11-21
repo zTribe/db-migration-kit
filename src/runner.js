@@ -67,7 +67,7 @@ export async function inspectMigrations(pool, options) {
   }
 }
 
-async function assertServiceOnlyFunctions(client, signatures = []) {
+async function assertServiceOnlyFunctions(client, signatures = [], { allowMissing = false } = {}) {
   for (const signature of signatures) {
     const { rows: [permission] } = await client.query(`
       SELECT p.prosecdef AS definer,
@@ -80,6 +80,7 @@ async function assertServiceOnlyFunctions(client, signatures = []) {
              ) AS public
       FROM pg_catalog.pg_proc p WHERE p.oid = pg_catalog.to_regprocedure($1)
     `, [signature]);
+    if (!permission && allowMissing) continue;
     if (!permission?.definer || !permission.service || permission.anon || permission.authenticated || permission.public) {
       throw new Error(`Service-only function policy failed: ${signature}`);
     }
@@ -165,7 +166,9 @@ export async function applyMigrations(pool, options) {
           await client.query(migration.sql);
           if (typeof config.afterTransactionalMigration === "function") await config.afterTransactionalMigration(client, migration, config);
           if (guard) {
-            await assertServiceOnlyFunctions(client, config.serviceOnlyFunctions);
+            // A later reviewed migration may introduce another service-only RPC.
+            // Check everything that exists now; require the full declared set at completion.
+            await assertServiceOnlyFunctions(client, config.serviceOnlyFunctions, {allowMissing:true});
             await guard.after(client);
           }
           await client.query(
@@ -181,6 +184,9 @@ export async function applyMigrations(pool, options) {
       appliedNow.push(migration.version);
       byVersion.add(migration.version);
     }
+    // Fail closed even if there were no pending migrations: every configured
+    // service-only function must exist and retain its strict effective ACL.
+    await assertServiceOnlyFunctions(client, config.serviceOnlyFunctions);
     return { applied: appliedNow, total: migrations.length };
   });
 }
