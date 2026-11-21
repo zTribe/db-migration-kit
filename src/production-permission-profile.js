@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { readPermissionState } from "./permission-state.js";
 const VALID=/^[a-z_][a-z_0-9]*$/;
 const FLAG=["rolcanlogin","rolsuper","rolcreatedb","rolcreaterole","rolbypassrls","rolinherit","rolreplication"];
 const SECTIONS=["relations","functions","column_acls","policies"];
@@ -68,23 +67,29 @@ export function deriveProductionPermissionProfile(snapshot,{project,schemas,role
   catalog:projectPermissionCatalog(snapshot,scope)};
 }
 /** Adapt the shared Kit's real PostgreSQL permission-state query to the export format. */
-function fromDatabaseState(state){
- const p=state.permissions??state;
- const md5=s=>createHash("md5").update(s??"").digest("hex");
- return {
-  postgres_version:"17.0",roles:p.roles,memberships:p.memberships,
-  schemas:p.schemas.map(x=>({schema_name:x.schema,owner:x.owner,acl:x.acl})),
-  database_acl:{owner:p.databasePrivileges?.[0]?.owner,acl:p.databasePrivileges?.[0]?.acl},
-  relations:p.objects.map(x=>({schema_name:x.schema,name:x.name,relkind:x.kind,owner:x.owner,
-   rls:x.rls,force_rls:x.force_rls,acl:x.acl})),
-  column_acls:p.columnPrivileges.map(x=>({schema_name:x.schema,table_name:x.relation,
-   column_name:x.column_name,acl:x.acl})),
-  functions:p.functions.map(x=>({schema_name:x.schema,name:x.name,arguments:x.arguments,
-   owner:x.owner,security_definer:x.security_definer,function_settings:x.configuration,acl:x.acl})),
-  policies:p.policies.map(x=>({schemaname:x.schema,tablename:x.tablename,
-   policyname:x.policyname,permissive:x.permissive,roles:x.roles,cmd:x.cmd,
-   using_hash:md5(x.qual),check_hash:md5(x.with_check)}))
- };
+/** Match exactly the columns and hashes in the operator's Supabase SQL Editor export.
+ * readPermissionState() alone lacks function definition hashes and cannot prove parity. */
+async function readProductionCatalog(client,schemas,roles){
+ const query=async(sql,params=[])=> (await client.query(sql,params)).rows;
+ const postgres_version=(await query("SELECT current_setting('server_version') AS v"))[0].v;
+ const roleRows=await query(
+  "SELECT rolname,rolcanlogin,rolsuper,rolcreatedb,rolcreaterole,rolbypassrls,rolinherit,rolreplication FROM pg_catalog.pg_roles WHERE rolname=ANY($1::text[])",[roles]);
+ const memberships=await query(
+  "SELECT member.rolname AS member,parent.rolname AS parent,a.admin_option,a.inherit_option,a.set_option FROM pg_catalog.pg_auth_members a JOIN pg_catalog.pg_roles member ON member.oid=a.member JOIN pg_catalog.pg_roles parent ON parent.oid=a.roleid WHERE member.rolname=ANY($1::text[]) AND parent.rolname=ANY($1::text[])",[roles]);
+ const schemasRows=await query(
+  "SELECT nspname AS schema_name,pg_catalog.pg_get_userbyid(nspowner) AS owner,nspacl::text AS acl FROM pg_catalog.pg_namespace WHERE nspname=ANY($1::text[])",[schemas]);
+ const relations=await query(
+  "SELECT n.nspname AS schema_name,c.relname AS name,c.relkind,pg_catalog.pg_get_userbyid(c.relowner) AS owner,c.relrowsecurity AS rls,c.relforcerowsecurity AS force_rls,c.relacl::text AS acl FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=ANY($1::text[]) AND c.relkind IN ('r','p','v','m','f','S')",[schemas]);
+ const column_acls=await query(
+  "SELECT n.nspname AS schema_name,c.relname AS table_name,a.attname AS column_name,a.attacl::text AS acl FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=ANY($1::text[]) AND a.attnum>0 AND NOT a.attisdropped AND a.attacl IS NOT NULL",[schemas]);
+ const functions=await query(
+  "SELECT n.nspname AS schema_name,p.proname AS name,pg_catalog.pg_get_function_identity_arguments(p.oid) AS arguments,pg_catalog.pg_get_userbyid(p.proowner) AS owner,p.prosecdef AS security_definer,p.proconfig AS function_settings,p.proacl::text AS acl,md5(pg_catalog.pg_get_functiondef(p.oid)) AS definition_hash FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=ANY($1::text[]) AND p.prokind IN ('f','p')",[schemas]);
+ const policies=await query(
+  "SELECT schemaname,tablename,policyname,permissive,roles,cmd,md5(coalesce(qual,'')) AS using_hash,md5(coalesce(with_check,'')) AS check_hash FROM pg_catalog.pg_policies WHERE schemaname=ANY($1::text[])",[schemas]);
+ const database_acl=(await query(
+  "SELECT pg_catalog.pg_get_userbyid(datdba) AS owner,datacl::text AS acl FROM pg_catalog.pg_database WHERE datname=current_database()"))[0];
+ return {postgres_version,roles:roleRows,memberships,schemas:schemasRows,
+  relations,column_acls,functions,policies,database_acl};
 }
 export function compareProductionPermissionProfiles(expected,actual){
  if(expected.schemaVersion!==1||actual.schemaVersion!==1||expected.project!==actual.project)
@@ -99,7 +104,7 @@ export function compareProductionPermissionProfiles(expected,actual){
   limitations:"Supabase extensions and actual Railway migration login require independent verification"};
 }
 export function assertProductionPermissionProfile(profile,state){
- const actual=deriveProductionPermissionProfile(fromDatabaseState(state),{
+ const actual=deriveProductionPermissionProfile(state,{
   project:profile.project,schemas:profile.schemas,
   roles:profile.roles.map(x=>x.rolname),migrationRole:profile.migrationRole});
  const report=compareProductionPermissionProfiles(profile,actual);
@@ -113,7 +118,7 @@ export async function verifyProductionPermissionFixture(client,profile){
  try{
   const major=(await client.query("SELECT current_setting('server_version_num')::integer / 10000 AS major")).rows[0]?.major;
   if(major!==profile.postgresMajor)throw Error("Postgres major mismatch: expected "+profile.postgresMajor+", got "+major);
-  const state=await readPermissionState(client,profile.schemas);
+  const state=await readProductionCatalog(client,profile.schemas,profile.roles.map(x=>x.rolname));
   return assertProductionPermissionProfile(profile,state);
  } finally {await client.query("ROLLBACK")}
 }
