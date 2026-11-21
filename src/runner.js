@@ -142,10 +142,11 @@ export async function applyMigrations(pool, options) {
       } else {
         await client.query("BEGIN");
         try {
+          // Capture the real catalog before any temporary Owner membership.
+          if (guard) await guard.before(client, migration);
           if (typeof config.beforeTransactionalPreflight === "function") await config.beforeTransactionalPreflight(client, migration, config);
           if (config.capabilityPreflight !== false) await preflightMigrationCapabilities(client, migration.sql);
           if (typeof config.beforeMigration === "function") await config.beforeMigration(client, migration, config);
-          if (guard) await guard.before(client, migration);
           await client.query(migration.sql);
           if (typeof config.afterTransactionalMigration === "function") await config.afterTransactionalMigration(client, migration, config);
           if (guard) {
