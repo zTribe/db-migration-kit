@@ -8,7 +8,7 @@ const FUNCTION_DDL = /\b(?:create\s+(?:or\s+replace\s+)?|alter\s+|drop\s+)functi
  * Preserve SQL offsets while hiding quoted strings, dollar-quoted PL/pgSQL
  * bodies and comments. Owner authorization must never be matched inside data.
  */
-export function structuralSql(sql) {
+export function structuralSql(sql, { preserveQuotedIdentifiers = false } = {}) {
   const out = sql.split("");
   const mask = (a, b) => {
     for (let k = a; k < b; k++) if (!/\s/.test(out[k])) out[k] = " ";
@@ -51,7 +51,11 @@ export function structuralSql(sql) {
         i++;
       }
       if (!closed) throw Error("unclosed SQL quoted literal in owner policy");
-      mask(start, i);
+      // In relation capability preflight, double-quoted SQL identifiers must
+      // remain visible so the preflight can resolve canonical schema.table
+      // names. All other callers still mask them, and literal strings are
+      // always masked. Invalid/mixed-case identifiers fail the relation guard.
+      if (quote !== '"' || !preserveQuotedIdentifiers) mask(start, i);
       continue;
     }
     if (sql[i] === "$") {
