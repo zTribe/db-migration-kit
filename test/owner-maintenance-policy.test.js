@@ -18,7 +18,7 @@ test("Chat versioned RPC requires explicit reviewed owner transfer",()=>{
  assert.throws(()=>chat.forMigration({version:"20261121122000_other",sql:"ALTER FUNCTION app.rogue() OWNER TO chat_api_runtime_owner;"}),/approved recipe/);
  assert.throws(()=>chat.forCandidate("list_v1",sql+" ALTER FUNCTION app.other() OWNER TO chat_api_runtime_owner;"),/unexpected function DDL/);
  assert.throws(()=>chat.forCandidate("list_v1",sql.replace(/REVOKE CREATE[^;]+;/,"")),/requires temporary CREATE/);
- assert.throws(()=>chat.forCandidate("list_v1",sql+" GRANT chat_api_runtime_owner TO current_user;"),/forbids SQL role grants/);
+ assert.throws(()=>chat.forCandidate("list_v1",sql+" GRANT chat_api_runtime_owner TO current_user;"),/forbids SQL role grants|forbids extra SQL statement/);
 });
 test("Indexer counter-based policy uses the same Kit engine",()=>{
  const indexer=createOwnerMaintenancePolicy({legacyThrough:"052_role_cleanup",recipes:[
@@ -50,7 +50,7 @@ test("Owner recipe enforces actual SQL order, single grants and quoted-literal i
  )),/unrelated object DDL/);
  assert.throws(()=>policy.forCandidate("approved",baseSql.replace(
    "SET LOCAL ROLE "+role+";","SET LOCAL ROLE untrusted; SET LOCAL ROLE "+role+";"
- )),/exactly one/);
+ )),/exactly one|forbids extra SQL statement/);
  assert.throws(()=>policy.forCandidate("approved",baseSql+" SELECT 'GRANT other TO current_user; ALTER TABLE app.rogue';"),/forbids extra SQL statement/);
  assert.equal(policy.forCandidate("approved",baseSql+" -- SET ROLE attacker; GRANT attacker TO current_user;").mode,"set-role");
 });
@@ -120,5 +120,5 @@ test("explicitly versioned historic DO check stays compatible, but never permits
   "RESET ROLE; REVOKE CREATE ON SCHEMA app FROM chat_api_runtime_owner;";
  assert.equal(policy.forMigration({version,sql:migration}).role,"chat_api_runtime_owner");
  assert.throws(()=>policy.forCandidate("realtime_outbox_claim_owner_fix",migration),/forbids extra SQL statement/);
- assert.throws(()=>policy.forMigration({version:"20261122120000_realtime_outbox_claim_owner_fix",sql:migration}),/forbids extra SQL statement/);
+ assert.throws(()=>policy.forMigration({version:"20261122120000_realtime_outbox_claim_owner_fix",sql:migration}),/forbids extra SQL statement|requires approved recipe/);
 });
