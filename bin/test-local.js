@@ -27,19 +27,35 @@ const file = project === "chat" ? "test/chat-migrate.integration.test.mjs" : "te
 async function runFixture(extraEnv = {}) {
   const name = "ztribe-migration-" + randomUUID();
   let started = false;
+  // PostgreSQL 16+ forbids demoting the cluster's bootstrap superuser.
+  // Production replay uses a separate bootstrap identity, so "postgres" can
+  // be demoted to the exact non-superuser attributes captured from Supabase.
+  const bootstrapRole = mode === "production" ? "kit_profile_bootstrap" : "postgres";
   docker("run", "--rm", "-d", "--name", name, "-e", "POSTGRES_PASSWORD=postgres",
+    "-e", "POSTGRES_USER=" + bootstrapRole,
     "-p", "127.0.0.1::5432", "postgres:17");
   started = true;
   let primaryFailure = null;
   try {
     for (let attempt = 0; ; attempt++) {
-      if (spawnSync("docker", ["exec", name, "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]).status === 0) break;
+      if (spawnSync("docker", ["exec", name, "pg_isready", "-h", "127.0.0.1", "-U", bootstrapRole]).status === 0) break;
       if (attempt === 59) throw new Error("Local PostgreSQL did not start");
       await setTimeout(500);
     }
     const port = docker("port", name, "5432/tcp").split(":").at(-1);
     if (!/^\d+$/.test(port)) throw new Error("Could not resolve the isolated PostgreSQL port");
+    if (mode === "production") {
+      // All setup is confined to the just-created disposable Docker cluster.
+      // Historical migrations must still run under the postgres login; this
+      // separate role is NOT the immutable cluster bootstrap identity.
+      docker("exec", name, "psql", "-v", "ON_ERROR_STOP=1", "-U", bootstrapRole,
+        "-d", "postgres", "-c",
+        "CREATE ROLE postgres LOGIN SUPERUSER PASSWORD 'postgres'");
+      docker("exec", name, "psql", "-v", "ON_ERROR_STOP=1", "-U", bootstrapRole,
+        "-d", "postgres", "-c", "ALTER DATABASE postgres OWNER TO postgres");
+    }
     const url = "postgres://postgres:postgres@127.0.0.1:" + port + "/postgres";
+    const bootstrapUrl = "postgres://" + bootstrapRole + ":postgres@127.0.0.1:" + port + "/postgres";
     const env=safeTestEnvironment(process.env,{
       CHAT_TEST_DATABASE_URL:url, INDEXER_UPGRADE_DATABASE_URL:url,
       MIGRATION_UPGRADE_BASE_SHA:base,
@@ -47,6 +63,7 @@ async function runFixture(extraEnv = {}) {
       MIGRATION_LOCAL_FULL:mode==="full"?"1":"",
       MIGRATION_LOCAL_UPGRADE:mode==="upgrade"?"1":"",
       MIGRATION_VERIFY_PRODUCTION_PROFILE:mode==="production"?"1":"",
+      MIGRATION_FIXTURE_BOOTSTRAP_URL:mode==="production"?bootstrapUrl:"",
       MIGRATION_CANDIDATE_CAPTURE:"",MIGRATION_PREPARE_CHECKS:"",
       ...extraEnv
     });
