@@ -152,7 +152,6 @@ export function createOwnerMaintenancePolicy({recipes=[],legacyThrough="",legacy
     const resets=[...body.matchAll(/\breset\s+role\s*;/ig)];
     const firstFunction=functions[0].index,lastFunction=functions.at(-1).index;
     if(rule.serviceExecuteRole) {
-    if(rule.serviceExecuteRole) {
       const execRevokeMatch=[...body.matchAll(new RegExp(
         "\\brevoke\\s+all\\s+on\\s+function\\s+"+fn+
         "\\s*\\(integer\\)\\s+from\\s+public\\s*,\\s*anon\\s*,\\s*authenticated\\s*,\\s*"+
