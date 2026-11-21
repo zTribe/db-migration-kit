@@ -77,7 +77,7 @@ const SENSITIVE = /\b(?:set\s+(?:local\s+)?role|grant\s+create\s+on\s+schema|own
 
 export function createOwnerMaintenancePolicy({recipes=[],legacyThrough="",legacyDoVersions=[]}={}) {
   if(!Array.isArray(recipes)||!Array.isArray(legacyDoVersions)||
-     legacyDoVersions.some(v=>typeof v!=="string"||!/^(?:\\d{3}|\\d{14})_[a-z0-9_]+$/.test(v)))
+     legacyDoVersions.some(v=>typeof v!=="string"||!/^(?:\d{3}|\d{14})_[a-z0-9_]+$/.test(v)))
     throw Error("invalid owner recipes or legacy DO versions");
   const entries=new Map();
   for(const recipe of recipes) {
@@ -109,7 +109,7 @@ export function createOwnerMaintenancePolicy({recipes=[],legacyThrough="",legacy
     const grantStmt=new RegExp("^grant create on schema "+schema+" to "+role+"$","i");
     const revokeStmt=new RegExp("^revoke create on schema "+schema+" from "+role+"$","i");
     const setStmt=new RegExp("^set local role "+role+"$","i");
-    const functionStmt=new RegExp("^(?:create (?:or replace )?|alter )function "+fn+"\\\\s*\\\\(","i");
+    const functionStmt=new RegExp("^(?:create (?:or replace )?|alter )function "+fn+"\\s*\\(","i");
         for(const raw of body.split(";")) {
       const stmt=raw.trim().replace(/\\s+/g," ");
       if(!stmt)continue;
