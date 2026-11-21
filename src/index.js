@@ -15,6 +15,7 @@ export { autoBaselineVerifiedCatalog, omitMigrationLedger } from "./auto-baselin
 export { inspectConcurrentIndex, recoverInvalidConcurrentIndex } from "./index-recovery.js";
 
 export { preflightMigrationCapabilities } from "./capability.js";
+export { createOwnerMaintenancePolicy, acquireTemporaryOwnerRole, releaseTemporaryOwnerRole } from "./owner-maintenance.js";
 export { diffPermissions, planMigration, assertMigrationReview, generateMigrationSql } from "./migration-plan.js";
 export { createMigration } from "./create-migration.js";
 export { readTargetState, guardMigration } from "./guarded-plan.js";

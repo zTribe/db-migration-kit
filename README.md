@@ -59,6 +59,29 @@ requires a catalog change and SQL that runs inside a Kit-managed transaction.
 Review the resulting diff and run the service's applicable checks before
 committing, including Indexer's `npm run test:db-security` for permission changes.
 
+## Owner-sensitive migration policy (Chat + Indexer)
+
+The shared Kit exports `createOwnerMaintenancePolicy`,
+`acquireTemporaryOwnerRole` and `releaseTemporaryOwnerRole`. Both consumers
+can declare their own strictly scoped function recipes; **unlisted new**
+owner-sensitive migrations fail closed. It does not mix Chat and Indexer role
+identities or grant elevated privileges automatically.
+
+A service may use the optional `beforeTransactionalPreflight` /
+`afterTransactionalMigration` Runner hooks to acquire and release a
+transaction-scoped, externally ADMIN-authorized `SET ROLE` capability.
+These hooks run only for normal transactional migrations; nontransactional
+migrations never auto-elevate. The entire DDL + ACL + ledger transaction must
+succeed or roll back. The service must choose and validate its own migration
+login, project identity, owner roles, review digest and deployment target.
+Approved recipes and role names remain project-specific configuration.
+
+See `test/owner-maintenance-policy.test.js` for Chat-style timestamp and
+Indexer-style counter examples. This is policy/adapter infrastructure,
+**not** an authorization to migrate live databases. Only a real PG17
+non-superuser upgrade and a target-specific read-only preflight can confirm
+a real deployment path.
+
 ## Library capabilities
 
 - Explicit, ordered migration manifests and SHA-256 checksums.

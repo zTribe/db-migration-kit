@@ -1,5 +1,5 @@
 export type MigrationEntry = string | { file: string; version: string };
-export type MigrationConfig = { directory: string; files: MigrationEntry[]; serviceOnlyFunctions?: string[]; migrationGuard?: ReturnType<typeof guardMigration>; schema?: string; ledgerTable?: string; lockName?: string; lockWaitMs?: number; lockPollMs?: number; legacyBaselineChecksums?: Record<string,{ledgerChecksum:string;sqlChecksum:string}>; beforeMigrations?: (client: any, config: any) => Promise<void>; verifyTarget?: (client: any, config: any) => Promise<void>; verifyBaseline?: (client: any, input: any) => Promise<boolean>; baselineThrough?: string; allowNonTransactional?: boolean; ledgerSecurity?: { auditRole?: string; clientRoles?: string[] }; autoBaseline?: { through: string; schemas: string[]; expectedCatalog: any }; capabilityPreflight?: boolean; beforeMigration?: (client: any, migration: {version:string;name:string;file:string;sql:string;checksum:string}, config: any) => Promise<void> };
+export type MigrationConfig = { directory: string; files: MigrationEntry[]; serviceOnlyFunctions?: string[]; migrationGuard?: ReturnType<typeof guardMigration>; schema?: string; ledgerTable?: string; lockName?: string; lockWaitMs?: number; lockPollMs?: number; legacyBaselineChecksums?: Record<string,{ledgerChecksum:string;sqlChecksum:string}>; beforeMigrations?: (client: any, config: any) => Promise<void>; verifyTarget?: (client: any, config: any) => Promise<void>; verifyBaseline?: (client: any, input: any) => Promise<boolean>; baselineThrough?: string; allowNonTransactional?: boolean; ledgerSecurity?: { auditRole?: string; clientRoles?: string[] }; autoBaseline?: { through: string; schemas: string[]; expectedCatalog: any }; capabilityPreflight?: boolean; beforeMigration?: (client: any, migration: {version:string;name:string;file:string;sql:string;checksum:string}, config: any) => Promise<void>; beforeTransactionalPreflight?: (client:any,migration:any,config:any)=>Promise<void>; afterTransactionalMigration?: (client:any,migration:any,config:any)=>Promise<void> };
 export function checksumText(sql: string): string;
 export function loadManifest(config: MigrationConfig): Promise<Array<{version:string;name:string;file:string;sql:string;checksum:string}>>;
 export function inspectMigrations(pool: any, config: MigrationConfig): Promise<any>;
@@ -30,6 +30,13 @@ export function generateCandidateFromMigratedDatabase(pool:any,migrationConfig:M
 export function assertApprovedSecurityPolicy(policy:any):any;
 
 export function preflightMigrationCapabilities(client: any, sql: string): Promise<void>;
+/** Explicit role maintenance policy; defaults to no extra owner privileges. */
+export type OwnerMaintenanceRecipe = {name:string;role:string;schema:string;functionName:string;mode:"set-role"|"transfer";version?:string};
+export type OwnerMaintenancePolicy = {forMigration(migration:{version:string;sql:string}):OwnerMaintenanceRecipe|null;forCandidate(name:string,sql:string):OwnerMaintenanceRecipe|null};
+export function createOwnerMaintenancePolicy(input?:{recipes?:OwnerMaintenanceRecipe[];legacyThrough?:string}):OwnerMaintenancePolicy;
+export type OwnerMaintenanceLease = {role:string;schema:string;added:boolean};
+export function acquireTemporaryOwnerRole(client:any,input:{role:string;schema:string}):Promise<OwnerMaintenanceLease>;
+export function releaseTemporaryOwnerRole(client:any,lease:OwnerMaintenanceLease):Promise<void>;
 export type StateRow = Record<string, unknown>;
 export type PermissionState = Record<"schemas" | "objects" | "columnPrivileges" | "functions" | "policies" | "roles" | "memberships", StateRow[]> & Partial<Record<"databasePrivileges" | "defaultPrivileges", StateRow[]>>;
 export type SchemaState = Record<"tables" | "columns" | "constraints" | "indexes" | "triggers" | "functions" | "policies" | "publications", StateRow[]>;
