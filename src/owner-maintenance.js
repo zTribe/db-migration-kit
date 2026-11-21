@@ -117,17 +117,16 @@ export function createOwnerMaintenancePolicy({recipes=[],legacyThrough="",legacy
     const grantStmt=new RegExp("^grant create on schema "+schema+" to "+role+"$","i");
     const revokeStmt=new RegExp("^revoke create on schema "+schema+" from "+role+"$","i");
     const setStmt=new RegExp("^set local role "+role+"$","i");
-    const functionStmt=new RegExp("^(?:create (?:or replace )?|alter )function "+fn+"\\\\s*\\\\(","i");
-    // An opt-in service-only RPC can edit EXECUTE on its exact signature,
-    // never table ACLs, roles or unrelated functions.
-    const signature=fn+"\\\\s*\\\\(integer\\\\)";
+    const functionStmt=new RegExp("^(?:create (?:or replace )?|alter )function "+fn+"\\s*\\(","i");
+    // Only an explicitly reviewed service-role RPC may change EXECUTE on its own signature.
+    const signature=fn+"\\s*\\(integer\\)";
     const executeRevoke=rule.serviceExecuteRole ? new RegExp(
       "^revoke all on function "+signature+" from public, anon, authenticated, "+esc(rule.serviceExecuteRole)+"$","i") : null;
     const executeGrant=rule.serviceExecuteRole ? new RegExp(
       "^grant execute on function "+signature+" to "+esc(rule.serviceExecuteRole)+"$","i") : null;
     const notifyStmt=rule.notifyPostgrest ? /^notify pgrst,$/i : null;
         for(const raw of body.split(";")) {
-      const stmt=raw.trim().replace(/\\s+/g," ");
+      const stmt=raw.trim().replace(/\s+/g," ");
       if(!stmt)continue;
       if(grantStmt.test(stmt)||revokeStmt.test(stmt)||setStmt.test(stmt)||
          /^reset role$/i.test(stmt)||functionStmt.test(stmt)||
@@ -153,26 +152,28 @@ export function createOwnerMaintenancePolicy({recipes=[],legacyThrough="",legacy
     const resets=[...body.matchAll(/\breset\s+role\s*;/ig)];
     const firstFunction=functions[0].index,lastFunction=functions.at(-1).index;
     if(rule.serviceExecuteRole) {
+    if(rule.serviceExecuteRole) {
       const execRevokeMatch=[...body.matchAll(new RegExp(
-        "\\\\brevoke\\\\s+all\\\\s+on\\\\s+function\\\\s+"+fn+
-        "\\\\s*\\\\(integer\\\\)\\\\s+from\\\\s+public\\\\s*,\\\\s*anon\\\\s*,\\\\s*authenticated\\\\s*,\\\\s*"+
-        esc(rule.serviceExecuteRole)+"\\\\s*;","ig"))];
+        "\\brevoke\\s+all\\s+on\\s+function\\s+"+fn+
+        "\\s*\\(integer\\)\\s+from\\s+public\\s*,\\s*anon\\s*,\\s*authenticated\\s*,\\s*"+
+        esc(rule.serviceExecuteRole)+"\\s*;","ig"))];
       const execGrantMatch=[...body.matchAll(new RegExp(
-        "\\\\bgrant\\\\s+execute\\\\s+on\\\\s+function\\\\s+"+fn+
-        "\\\\s*\\\\(integer\\\\)\\\\s+to\\\\s*"+esc(rule.serviceExecuteRole)+"\\\\s*;","ig"))];
+        "\\bgrant\\s+execute\\s+on\\s+function\\s+"+fn+
+        "\\s*\\(integer\\)\\s+to\\s*"+esc(rule.serviceExecuteRole)+"\\s*;","ig"))];
       if(execRevokeMatch.length!==1||execGrantMatch.length!==1||
          !(firstFunction<execRevokeMatch[0].index&&execRevokeMatch[0].index<execGrantMatch[0].index&&
            execGrantMatch[0].index<lastFunction))
         throw Error("owner policy requires exact service EXECUTE revoke/grant before owner transfer");
     }
-    const notices=[...body.matchAll(/\\bnotify\\s+pgrst\\s*,\\s*;/ig)];
+    const notices=[...body.matchAll(/\bnotify\s+pgrst\s*,\s*;/ig)];
     if(rule.notifyPostgrest) {
-      if(notices.length!==1||!/^notify pgrst, 'reload schema';$/im.test(sql.trimEnd().split("\\n").at(-1).trim())||
+      if(notices.length!==1||!sql.trimEnd().endsWith("NOTIFY pgrst, 'reload schema';")||
          notices[0].index<revoke[0].index)
         throw Error("owner policy requires one final PostgREST cache reload notification");
     } else if(notices.length) {
       throw Error("owner policy forbids unreviewed notification");
     }
+    
     if(rule.mode==="set-role") {
       if(sets.length!==1||resets.length!==1||
           sets[0][1].toLowerCase()!==rule.role)
