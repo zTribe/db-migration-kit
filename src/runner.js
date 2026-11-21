@@ -134,7 +134,10 @@ export async function applyMigrations(pool, options) {
         if (guard) throw new Error("Guarded migrations must be transactional");
         if (config.allowNonTransactional !== true) throw new Error(`non-transactional migration ${migration.version} requires explicit allowNonTransactional=true; partial execution cannot be rolled back`);
         if (config.capabilityPreflight !== false) {
-          await preflightMigrationCapabilities(client, migration.sql);
+          await preflightMigrationCapabilities(client, migration.sql, {
+            future: Boolean(config.capabilityRelationPreflightAfter &&
+              migration.version > config.capabilityRelationPreflightAfter),
+          });
           if (config.capabilityRelationPreflightAfter && migration.version > config.capabilityRelationPreflightAfter)
             await preflightRelationCapabilities(client, migration.sql);
         }
@@ -151,7 +154,10 @@ export async function applyMigrations(pool, options) {
           if (guard) await guard.before(client, migration);
           if (typeof config.beforeTransactionalPreflight === "function") await config.beforeTransactionalPreflight(client, migration, config);
           if (config.capabilityPreflight !== false) {
-          await preflightMigrationCapabilities(client, migration.sql);
+          await preflightMigrationCapabilities(client, migration.sql, {
+            future: Boolean(config.capabilityRelationPreflightAfter &&
+              migration.version > config.capabilityRelationPreflightAfter),
+          });
           if (config.capabilityRelationPreflightAfter && migration.version > config.capabilityRelationPreflightAfter)
             await preflightRelationCapabilities(client, migration.sql);
         }

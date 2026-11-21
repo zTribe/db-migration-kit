@@ -25,3 +25,23 @@ test("RESET ROLE before DDL cannot authorize owner switch",async()=>{
   await assert.rejects(preflightMigrationCapabilities(fixture({set:true}),"SET LOCAL ROLE chat_api_runtime_owner; RESET ROLE; "+fn),/cannot alter/);
 });
 test("inherited owner still passes",async()=>{await preflightMigrationCapabilities(fixture({usage:true}),fn)});
+
+test("new CREATE FUNCTION checks actual schema CREATE; legacy CREATE remains compatible",async()=>{
+ const createFn="CREATE FUNCTION app.new_rpc() RETURNS integer LANGUAGE sql AS 'select 1';";
+ const noCreate={async query(sql) {
+   if(sql.includes("current_user as role"))return{rows:[{role:"kit_migrator",superuser:false}]};
+   if(sql.includes("has_schema_privilege"))return{rows:[{can_create:false}]};
+   throw Error(sql);
+ }};
+ await preflightMigrationCapabilities(noCreate,createFn);
+ await assert.rejects(preflightMigrationCapabilities(noCreate,createFn,{future:true}),/lacks CREATE/);
+});
+test("future migration cannot trust self-granted owner privilege",async()=>{
+ const sql="GRANT chat_api_runtime_owner TO current_user; "+fn;
+ await preflightMigrationCapabilities(fixture(),sql); // historical compatibility
+ await assert.rejects(preflightMigrationCapabilities(fixture(),sql,{future:true}),/cannot alter/);
+});
+test("future function checks ignore quoted SQL content",async()=>{
+ await preflightMigrationCapabilities({async query(){throw Error("catalog must not be accessed");}},
+   "SELECT 'CREATE OR REPLACE FUNCTION app.ghost()'; -- ALTER FUNCTION app.ghost()",{future:true});
+});

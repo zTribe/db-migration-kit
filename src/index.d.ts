@@ -29,7 +29,7 @@ export function generateCandidatePolicy(snapshot:any,options:any):any;
 export function generateCandidateFromMigratedDatabase(pool:any,migrationConfig:MigrationConfig,options:any):Promise<any>;
 export function assertApprovedSecurityPolicy(policy:any):any;
 
-export function preflightMigrationCapabilities(client: any, sql: string): Promise<void>;
+export function preflightMigrationCapabilities(client: any, sql: string, options?: {future?:boolean}): Promise<void>;
 /** Explicit role maintenance policy; defaults to no extra owner privileges. */
 export type OwnerMaintenanceRecipe = {name:string;role:string;schema:string;functionName:string;mode:"set-role"|"transfer";version?:string};
 export type OwnerMaintenancePolicy = {forMigration(migration:{version:string;sql:string}):OwnerMaintenanceRecipe|null;forCandidate(name:string,sql:string):OwnerMaintenanceRecipe|null};
