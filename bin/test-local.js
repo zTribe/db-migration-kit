@@ -29,6 +29,7 @@ async function runFixture(extraEnv = {}) {
   docker("run", "--rm", "-d", "--name", name, "-e", "POSTGRES_PASSWORD=postgres",
     "-p", "127.0.0.1::5432", "postgres:17");
   started = true;
+  let primaryFailure = null;
   try {
     for (let attempt = 0; ; attempt++) {
       if (spawnSync("docker", ["exec", name, "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]).status === 0) break;
@@ -57,8 +58,17 @@ async function runFixture(extraEnv = {}) {
     if(result.status!==0)throw Error("Migration fixture failed for "+project+"; exit="+(result.status??result.signal)+"\n"+
       (result.stderr??"").slice(-2000)+"\n"+(result.stdout??"").slice(-2500));
     confirmTargetedFixtureRan(result.stdout??"",project);
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
-    if(started)docker("stop",name);
+    if (started) {
+      try { docker("stop",name); }
+      catch (cleanupError) {
+        if(primaryFailure) console.error("PG17 fixture cleanup also failed:", cleanupError);
+        else throw cleanupError;
+      }
+    }
   }
 }
 
@@ -117,8 +127,13 @@ if (mode !== "prepare") {
     console.log(file);
   } catch (error) {
     console.error(JSON.stringify(explainPrepareFailure(error,phase),null,2));
-    if (file) await rm(file, { force: true });
-    if (sidecarWritten) await rm(file + ".review.json", { force: true });
+    const pendingCleanup = [];
+    if (file) pendingCleanup.push(rm(file, { force: true }));
+    if (sidecarWritten) pendingCleanup.push(rm(file + ".review.json", { force: true }));
+    const removed = await Promise.allSettled(pendingCleanup);
+    const failures = removed.filter(item => item.status === "rejected").map(item => item.reason);
+    if (failures.length) throw new AggregateError([error,...failures],
+      "Migration prepare failed and artifact cleanup was incomplete; review uncommitted files before retrying");
     throw error;
   } finally {
     await rm(scratch, { recursive: true, force: true });
