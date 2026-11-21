@@ -4,10 +4,14 @@
  * for dynamic DO blocks, changing ownership, DDL dependencies and search_path.
  */
 import { structuralSql } from "./owner-maintenance.js";
-// Accept canonical lower-case identifiers, quoted or unquoted, but never
-// unqualified names, case-sensitive aliases, or escaped quoted identifiers.
+// Accept canonical lower-case identifiers, quoted or unquoted.
 const ident = '(?:"([a-z_][a-z0-9_$]*)"|([a-z_][a-z0-9_$]*))';
-const qualified = new RegExp('^' + ident + '\\.' + ident + '
+const qualified = new RegExp('^' + ident + '\\.' + ident + '$');
+function normalizeQualified(name) {
+  const match = qualified.exec(name);
+  if (!match) return null;
+  return (match[1] ?? match[2]) + '.' + (match[3] ?? match[4]);
+}
 const TOKEN = "([^\\s,;(]+)";
 function rule(label, head, pattern) {
   return {label,head:new RegExp(head,"ig"),pattern:new RegExp(pattern,"ig")};
