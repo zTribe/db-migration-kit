@@ -67,7 +67,7 @@ export async function inspectMigrations(pool, options) {
   }
 }
 
-async function assertServiceOnlyFunctions(client, signatures = [], { allowMissing = false } = {}) {
+export async function assertServiceOnlyFunctions(client, signatures = [], { allowMissing = false } = {}) {
   for (const signature of signatures) {
     const { rows: [permission] } = await client.query(`
       SELECT p.prosecdef AS definer,
