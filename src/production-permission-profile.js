@@ -24,7 +24,7 @@ const json=value=>JSON.stringify(stable(value));
 function pickRows(rows,section){
  return rows.map(row=>Object.fromEntries(FIELDS[section].map(field=>[
   field,field==="acl"?acl(row[field]):Array.isArray(row[field])?[...row[field]].sort():row[field]??null
- ]))).sort((a,b)=>json(a).localeCompare(json(b)));
+ ]))).sort((a,b)=>json(a)<json(b)?-1:json(a)>json(b)?1:0);
 }
 function digest(rows){
  return {count:rows.length,sha256:createHash("sha256").update(json(rows)).digest("hex")};
@@ -52,7 +52,7 @@ export function deriveProductionPermissionProfile(snapshot,{project,schemas,role
   .map(row=>({member:row.member,parent:row.parent,admin_option:row.admin_option===true,
    inherit_option:row.inherit_option===true||row.inherit_option==="true",
    set_option:row.set_option===true||row.set_option==="true"}))
-  .sort((a,b)=>json(a).localeCompare(json(b)));
+  .sort((a,b)=>json(a)<json(b)?-1:json(a)>json(b)?1:0);
  const schemaRights=scope.map(name=>{
   const row=snapshot.schemas.find(x=>x.schema_name===name);
   if(!row)throw Error("Production schema missing: "+name);
@@ -111,6 +111,8 @@ export async function verifyProductionPermissionFixture(client,profile){
  // This function is strictly read-only, including the database session.
  await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
  try{
+  const major=(await client.query("SELECT current_setting('server_version_num')::integer / 10000 AS major")).rows[0]?.major;
+  if(major!==profile.postgresMajor)throw Error("Postgres major mismatch: expected "+profile.postgresMajor+", got "+major);
   const state=await readPermissionState(client,profile.schemas);
   return assertProductionPermissionProfile(profile,state);
  } finally {await client.query("ROLLBACK")}
@@ -129,6 +131,9 @@ export function renderDisposableRoleSetup(profile){
     if(typeof role[k]!=="boolean")throw Error("Invalid role option "+k);
     return role[k]?t:f;
    });
+  // Role bootstrap and demotion must run as a separate disposable Docker superuser.
+  sql.push("DO $kit_role$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"+
+    role.rolname+"') THEN CREATE ROLE "+q(role.rolname)+" NOLOGIN; END IF; END $kit_role$;");
   sql.push("ALTER ROLE "+q(role.rolname)+" "+opts.join(" ")+";");
  }
  for(const m of profile.memberships)sql.push("GRANT "+q(m.parent)+" TO "+q(m.member)+

@@ -81,3 +81,13 @@ export function auditRpcTableDependencies(snapshot:Pick<SchemaState,"functions">
 /** AST parser using libpg-query PostgreSQL 18 grammar against PG17 catalog: review-only. */
 export type RpcAstDependencyAudit = RpcTableDependencyAudit & { parserFamily:string; parserMajor:18; targetPostgresMajor:17 };
 export function auditRpcTableDependenciesAst(snapshot:Pick<SchemaState,"functions">,contracts:RpcTableDependencyContract[]):Promise<RpcAstDependencyAudit>;
+
+
+export type ProductionPermissionProfile = {schemaVersion:1;project:"chat"|"indexer";source:"production";migrationRole:string;
+ postgresMajor:17;schemas:string[];roles:Record<string,unknown>[];memberships:Record<string,unknown>[];
+ schemaRights:Record<string,unknown>[];databaseRights:Record<string,unknown>;catalog:Record<string,{count:number;sha256:string}>};
+export function deriveProductionPermissionProfile(snapshot:any,options:{project:"chat"|"indexer";schemas:string[];roles:string[];migrationRole?:string}):ProductionPermissionProfile;
+export function compareProductionPermissionProfiles(expected:ProductionPermissionProfile,actual:ProductionPermissionProfile):{ok:boolean;findings:any[];limitations:string};
+export function assertProductionPermissionProfile(profile:ProductionPermissionProfile,state:any):{ok:boolean;findings:any[];limitations:string};
+export function verifyProductionPermissionFixture(client:any,profile:ProductionPermissionProfile):Promise<{ok:boolean;findings:any[];limitations:string}>;
+export function renderDisposableRoleSetup(profile:ProductionPermissionProfile):string;
