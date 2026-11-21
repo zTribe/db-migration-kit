@@ -102,12 +102,14 @@ export function createOwnerMaintenancePolicy({recipes=[],legacyThrough=""}={}) {
     const role=esc(rule.role),schema=esc(rule.schema),fn=esc(target);
     const grantPattern=new RegExp("\\bgrant\\s+create\\s+on\\s+schema\\s+"+schema+"\\s+to\\s+"+role+"\\s*;","ig");
     const revokePattern=new RegExp("\\brevoke\\s+create\\s+on\\s+schema\\s+"+schema+"\\s+from\\s+"+role+"\\s*;","ig");
+    if(new RegExp("\\b(?:grant\\s+"+role+"\\s+to|alter\\s+role\\s+"+role+")\\b","i").test(body))
+      throw Error("owner policy forbids SQL role grants");
     const grants=[...body.matchAll(/\bgrant\b/ig)];
     const revokes=[...body.matchAll(/\brevoke\b/ig)];
     const grant=[...body.matchAll(grantPattern)],revoke=[...body.matchAll(revokePattern)];
     if(grants.length!==1||revokes.length!==1||grant.length!==1||revoke.length!==1||
         grant[0].index>=revoke[0].index)
-      throw Error("owner policy requires one ordered temporary CREATE grant and revoke");
+      throw Error("owner policy requires temporary CREATE grant and revoke in one ordered pair");
     const sets=[...body.matchAll(/\bset\s+(?:local\s+)?role\s+([a-z_][a-z_0-9]*)\s*;/ig)];
     const resets=[...body.matchAll(/\breset\s+role\s*;/ig)];
     const firstFunction=functions[0].index,lastFunction=functions.at(-1).index;
