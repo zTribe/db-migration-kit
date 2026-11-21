@@ -51,7 +51,7 @@ test("role capability is temporary and refuses unapproved login",async()=>{
  assert.equal(db.queries.filter(q=>q[0].startsWith("GRANT")).length,1);
  assert.equal(db.queries.filter(q=>q[0].startsWith("REVOKE")).length,1);
  await assert.rejects(acquireTemporaryOwnerRole(fake(),{role:"indexer_api_read",schema:"api"}),/ADMIN OPTION/);
- await assert.rejects(acquireTemporaryOwnerRole(fake({admin:true,inherited:true}),{role:"indexer_api_read",schema:"api"}),/non-inheriting/);
+ await assert.rejects(acquireTemporaryOwnerRole(fake({admin:true,inherited:true}),{role:"indexer_api_read",schema:"api"}),/without inherited runtime owner/);
  const existing=fake({canSet:true});
  assert.equal((await acquireTemporaryOwnerRole(existing,{role:"indexer_api_read",schema:"api"})).added,false);
 });
