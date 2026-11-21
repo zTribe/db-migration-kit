@@ -35,7 +35,23 @@ test("CREATE TABLE requires schema privilege; new relation may be changed in sam
 });
 test("unqualified/quoted object names, missing objects and misleading literals fail closed",async()=>{
   await assert.rejects(preflightRelationCapabilities(client(),"ALTER TABLE messages ADD COLUMN bad integer;"),/schema-qualified/);
-  await assert.rejects(preflightRelationCapabilities(client(),"ALTER TABLE \"app\".\"messages\" ADD COLUMN bad integer;"),/unsupported ALTER TABLE|schema-qualified/);
+  await preflightRelationCapabilities(client({canAlter:true}), 'ALTER TABLE "app"."messages" ADD COLUMN good integer;');
+  await assert.rejects(preflightRelationCapabilities(client(), 'ALTER TABLE "App"."messages" ADD COLUMN bad integer;'),/schema-qualified/);
+  await assert.rejects(preflightRelationCapabilities(client(), 'ALTER TABLE "app"."Messages" ADD COLUMN bad integer;'),/schema-qualified/);
+  await assert.rejects(preflightRelationCapabilities(client(), 'ALTER TABLE "app"."messages extra" ADD COLUMN bad integer;'),/schema-qualified/);
+  await assert.rejects(preflightRelationCapabilities(client(), 'ALTER TABLE "app"."mes""sages" ADD COLUMN bad integer;'),/schema-qualified/);
   await assert.rejects(preflightRelationCapabilities(client({exists:false}),"ALTER TABLE app.missing ADD COLUMN bad integer;"),/object not found/);
   assert.deepEqual(await preflightRelationCapabilities(client(),"SELECT 'ALTER TABLE app.messages;'; -- CREATE TRIGGER x ON app.messages"),{checked:0,created:0});
+});
+
+test("PG17 generator's quoted relations resolve to the same live-catalog owner checks",async()=>{
+  const db=client({owner:"chat_api_runtime_owner"});
+  await assert.rejects(
+    preflightRelationCapabilities(db, 'ALTER TABLE "app"."messages" ADD COLUMN "kit_test_note" text;'),
+    /cannot ALTER TABLE app.messages; owner is chat_api_runtime_owner/
+  );
+  assert.equal(db.calls.filter(([sql])=>sql.includes("pg_catalog.to_regclass"))[0][1][0],"app.messages");
+  await preflightRelationCapabilities(client({canAlter:true}), 'ALTER TABLE "app"."messages" ADD COLUMN "kit_test_note" text;');
+  await preflightRelationCapabilities(client({exists:false}), 'CREATE TABLE "app"."new_table" (id integer); ALTER TABLE "app"."new_table" ADD COLUMN "name" text;');
+  await assert.rejects(preflightRelationCapabilities(client({create:false}), 'CREATE TABLE "app"."new_table" (id integer);'),/no CREATE/);
 });
