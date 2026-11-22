@@ -160,7 +160,8 @@ export async function applyMigrations(pool, options) {
               migration.version > config.capabilityRelationPreflightAfter),
           });
           if (config.capabilityRelationPreflightAfter && migration.version > config.capabilityRelationPreflightAfter)
-            await preflightRelationCapabilities(client, migration.sql);
+            await preflightRelationCapabilities(client, migration.sql,
+              {transactionalPolicyProbe:true});
         }
           if (typeof config.beforeMigration === "function") await config.beforeMigration(client, migration, config);
           await client.query(migration.sql);

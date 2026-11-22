@@ -205,3 +205,22 @@ This read-only preflight reports machine-readable issue `code`, `severity`, `mes
 ### Owner-maintenance recipe statement boundary
 
 For new migration candidates, a reviewed Owner recipe authorizes **only** the temporary schema CREATE grant, local role switch, reviewed FUNCTION DDL, role reset and CREATE revoke, in approved order. Other statements (including DO/CALL/SELECT or dynamic DDL) are rejected. Keep unrelated SQL in an independently reviewed migration. `legacyDoVersions` is an explicit compatibility escape hatch for exact preexisting reviewed migration versions with immutable checksum protection; never enable it for new migration candidates. It applies only to historical forMigration() replay, not to new AI candidates. DO/CALL in ordinary candidates generates a manual-review diagnostic and must be validated against PG17.
+
+## Transactional CREATE POLICY capability preflight
+
+For **new, reviewed transactional migrations** only, Kit checks the relation
+owner as usual. PostgreSQL deployments can delegate `CREATE POLICY` through
+database-side authorization without changing catalog ownership. When an
+existing relation fails the ownership preflight, Kit can perform a **generic**
+capability test in the same migration transaction: savepoint → create a
+temporary **RESTRICTIVE, always-false** policy on the target relation →
+roll back to savepoint → release savepoint. Only a successful real SQL check
+permits the migration to proceed. The policy never commits.
+
+This applies to any relation and schema; there are no provider-specific,
+business-specific, role-specific or table-name allowlists. Non-transactional
+migrations, `ALTER/DROP POLICY`, pending `SET ROLE`, missing tables and
+all other DDL remain governed by the original fail-closed checks. The actual
+migration statement must still execute successfully, pass its Kit checks and
+the non-superuser PostgreSQL upgrade tests.
+
