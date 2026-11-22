@@ -113,7 +113,7 @@ export async function preflightRelationCapabilities(client,sql,{transactionalPol
     // probe is the only exception when catalog ownership isn't sufficient.
     // SET ROLE preflights are not yet active in the current transaction.
     const createPolicy=item.kind==="POLICY" &&
-      /^create\\s+policy\\s+/i.test(body.slice(item.position));
+      /^create\s+policy\s+/i.test(body.slice(item.position));
     if(transactionalPolicyProbe && createPolicy && !role) {
       await probeTransactionalCreatePolicy(client,item.name);
       continue;
