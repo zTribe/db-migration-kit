@@ -50,14 +50,19 @@ function portableChangeMatches(expected, observed, actualRole) {
       !expected.previous || !expected.desired || !observed.previous || !observed.desired ||
       JSON.stringify(expected.identity) !== JSON.stringify(observed.identity) ||
       expected.sql !== observed.sql) return false;
-  const stripAcl = ({ acl, ...row }) => row;
+  // The reviewed function can be owned by a historical role (postgres)
+  // that is also the actual Production migrator. Normalization in the live
+  // capture replaces that owner's name with @migration-role; compare the
+  // same real identity rather than mistaking the rename for owner drift.
+  const stripAcl = ({ acl, ...row }) => ({
+    ...row, owner: row.owner === actualRole ? MIGRATION_ROLE : row.owner
+  });
   for (const field of ["previous", "desired"]) {
     if (JSON.stringify(stripAcl(expected[field])) !== JSON.stringify(stripAcl(observed[field])))
       return false;
-    const owner=expected[field].owner;
-    if (owner !== MIGRATION_ROLE) return false;
-    const planned=canonicalFunctionAcl(expected[field].acl,actualRole,owner);
-    const actual=canonicalFunctionAcl(observed[field].acl,actualRole,owner);
+    if (stripAcl(expected[field]).owner !== MIGRATION_ROLE) return false;
+    const planned=canonicalFunctionAcl(expected[field].acl,actualRole,MIGRATION_ROLE);
+    const actual=canonicalFunctionAcl(observed[field].acl,actualRole,MIGRATION_ROLE);
     if (!planned || !actual || JSON.stringify(planned) !== JSON.stringify(actual))
       return false;
   }
