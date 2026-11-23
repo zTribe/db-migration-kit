@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { portableReviewDeltaMatches, portablePreconditionMatches } from "../src/guarded-plan.js";
+import { portableReviewDeltaMatches, portablePreconditionMatches, contractChangeMatches } from "../src/guarded-plan.js";
 
 const reviewedBase = "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres,@migration-role=X*/postgres}";
 const runtimeBase = "{@migration-role=X/@migration-role,anon=X/@migration-role,authenticated=X/@migration-role,service_role=X/@migration-role}";
@@ -112,4 +112,36 @@ test("portable guard refuses alias collision when migrator is not historical fun
     desired:{...reviewed.changes[0].desired,owner:"other_owner"}
   }],structure:[]};
   assert.equal(portableReviewDeltaMatches(other,observed,"postgres"),false);
+});
+
+
+test("Lite contract accepts identical new grant with unrelated historical grantors",()=>{
+  assert.equal(contractChangeMatches(reviewedChange,observed.changes[0],"postgres"),true);
+});
+
+test("Lite contract rejects extra grants and changed role or DEFINER",()=>{
+  const base=runtimeBase;
+  const desired=base.slice(0,-1)+","+added+",rogue=X/@migration-role}";
+  assert.equal(contractChangeMatches(reviewedChange,change(base,desired),"postgres"),false);
+  assert.equal(contractChangeMatches(reviewedChange,change(base,base.slice(0,-1)+","+added+"}",{
+    desired:{...observed.changes[0].desired,security_definer:true}
+  }),"postgres"),false);
+  assert.equal(contractChangeMatches(reviewedChange,change(base,base.slice(0,-1)+","+added+"}",{
+    desired:{...observed.changes[0].desired,owner:"unrelated_owner"}
+  }),"postgres"),false);
+  assert.equal(contractChangeMatches(reviewedChange,change(base,base.slice(0,-1)+","+added+"}",{
+    identity:["app","unexpected_function",""]
+  }),"postgres"),false);
+});
+
+test("Lite contract maps only explicit migration-role alias, not historical identities",()=>{
+  const prior="{@migration-role=X/@migration-role}";
+  const next=prior.slice(0,-1)+",authenticated=X/@migration-role}";
+  const expected=change(prior,next);
+  const observedChange=change("{chat_ci_migrator=X/chat_ci_migrator}",
+    "{chat_ci_migrator=X/chat_ci_migrator,authenticated=X/chat_ci_migrator}",{
+      previous:{...change(prior,next).previous,owner:"chat_ci_migrator",acl:"{chat_ci_migrator=X/chat_ci_migrator}"},
+      desired:{...change(prior,next).desired,owner:"chat_ci_migrator",acl:"{chat_ci_migrator=X/chat_ci_migrator,authenticated=X/chat_ci_migrator}"}
+    });
+  assert.equal(contractChangeMatches(expected,observedChange,"chat_ci_migrator"),true);
 });
