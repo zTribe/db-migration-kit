@@ -145,7 +145,7 @@ const config = {
 
 ## Adoption status
 
-The standalone repo has real PostgreSQL 17 tests for the generic Runner and simulated Chat/Indexer adapter workflows. **Neither live Chat nor live Indexer repo has yet switched to consume this standalone package.** CI success here must not be interpreted as full consumer compatibility or production readiness. Never run against Production until full cross-repo tests and a separately authorized deployment.
+The standalone repo has PostgreSQL 17 integration tests for the Runner and simulated adapters. Chat and Indexer consume a separately pinned vendored copy of this package; Kit test success alone never proves consumer compatibility or production readiness. Never run against Production until full cross-repo tests and separately authorized deployment.
 
 ### Declarative migration planning
 
@@ -182,6 +182,31 @@ A guard names one transactional migration. Unguarded historical migrations
 continue through the existing Runner path. Use comparable PostgreSQL
 instances and schema coverage because raw role and ACL state includes
 environment-specific entries.
+
+### Kit Lite: review actual transactional security changes
+
+Set `"reviewMode": "contract"` alongside `historicalManifest` to replace the
+legacy cross-environment whole-catalog Before/After equality gate. The default
+`strict` mode remains available for diagnostics and existing consumers.
+
+Both modes still require an immutable historical checksum manifest and one
+review sidecar per new SQL file, binding SQL checksum, reviewed before/after
+catalog evidence, plan digest and reason. **Contract mode never treats a
+sidecar alone as permission to deploy**. During a migration transaction it
+captures the real live catalogs immediately before and after execution and
+rejects unexpected catalog objects, Owner/SECURITY DEFINER changes and ACL
+entitlement changes. ACL comparisons ignore historical GRANTOR provenance;
+only the explicitly reviewed `@migration-role` placeholder is mapped to the
+current migration login. Newly changed functions cannot gain unreviewed
+PUBLIC EXECUTE, and newly changed policies require live RLS enabled.
+
+The normal Runner **still** checks database identity, ledger/checksums,
+transaction boundaries, real Owner/relation capabilities, temporary Owner
+leases, service-only function ACLs and failure rollback. The consuming
+Chat/Indexer project **must** run non-superuser PG17 upgrade, rollback and
+business/security assertions for each candidate before release; contract mode
+does not replace those tests. No Dev/Production migration is authorized by
+switching this config option.
 
 For default enforcement, configure `historicalManifest` as a JSON map of
 existing migration versions to their SHA-256 checksums. Freeze that map at
