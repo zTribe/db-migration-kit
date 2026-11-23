@@ -33,12 +33,15 @@ function canonicalFunctionAcl(value, actualRole, owner) {
     if (/^\*/.test(flags)) return null;
     for (let i = 0; i < flags.length; i++) {
       const privilege = flags[i];
-      if (privilege === "*") return null;
+      // Function ACLs support EXECUTE only. Reject unknown privilege letters,
+      // repeated grants, and malformed option chains instead of merging them.
+      if (privilege !== "X") return null;
       const grantOption = flags[i + 1] === "*";
       if (grantOption) i++;
       const key = JSON.stringify([grantee, grantor, privilege]);
+      if (grants.has(key)) return null;
       const effectiveOption = grantOption && !(grantee === owner && grantor === owner);
-      grants.set(key, grants.get(key) === true || effectiveOption);
+      grants.set(key, effectiveOption);
     }
   }
   return [...grants].sort(([a], [b]) => a.localeCompare(b));
