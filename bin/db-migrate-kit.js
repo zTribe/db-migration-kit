@@ -7,7 +7,7 @@ const [command = "status", ...args] = process.argv.slice(2);
 if (command === "pre-draft") {
   const { dirname,join,resolve:pathResolve } = await import("node:path");
   const { buildPreDraftContext } = await import("../src/pre-draft-context.js");
-  const accepted=["--config=","--snapshot=","--profile=","--target=","--name=","--snapshot-source="];
+  const accepted=["--config=","--snapshot=","--profile=","--target=","--name=","--snapshot-source=","--operation="];
   if(args.some(x=>!accepted.some(a=>x.startsWith(a))))throw Error("Unsupported pre-draft CLI argument");
   const get = name => args.find(x=>x.startsWith("--"+name+"="))?.slice(name.length+3);
   const configPath=resolve(process.cwd(),get("config")??"db/migration-kit.config.json");
@@ -25,9 +25,10 @@ if (command === "pre-draft") {
     throw Error("Permission profile baseline SQL checksum drift");
   const source=get("snapshot-source")??"expected-target";
   if(source==="provided-snapshot"&&!get("snapshot"))throw Error("Supply --snapshot for external catalog");
+  if(get("snapshot")&&source!=="provided-snapshot")throw Error("Explicit --snapshot-source=provided-snapshot required with --snapshot");
   const report=buildPreDraftContext({project,snapshot,profile,ownerPolicy,
     targets:args.filter(x=>x.startsWith("--target=")).map(x=>x.slice(9)),
-    snapshotSource:source,migrationName:get("name")??null,baselineChecked:true});
+    snapshotSource:source,operation:get("operation")??"modify",migrationName:get("name")??null,baselineChecked:true});
   console.log(JSON.stringify(report,null,2));
   if(report.blocked)process.exitCode=2;
   process.exit();

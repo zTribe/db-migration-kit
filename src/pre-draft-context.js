@@ -9,7 +9,7 @@ export function parsePreDraftTarget(spec) {
   return {kind:m[1],schema:m[2],name:m[3],args:m[4]??null};
 }
 const argsKey = s=>String(s??"").trim().toLowerCase().replace(/\s+/g," ");
-export function buildPreDraftContext({project,snapshot,profile,targets,ownerPolicy={},migrationName=null,snapshotSource="expected-target",baselineChecked=false}={}) {
+export function buildPreDraftContext({project,snapshot,profile,targets,ownerPolicy={},migrationName=null,snapshotSource="expected-target",baselineChecked=false,operation="modify"}={}) {
   if(!["chat","indexer"].includes(project))throw Error("Unknown project");
   if(!snapshot?.permissions || !["schemas","objects","functions"].every(k=>Array.isArray(snapshot.permissions[k])))throw Error("Kit permissions catalog required");
   if(profile?.project!==project || profile.source!=="production" || profile.postgresMajor!==17 ||
@@ -17,6 +17,7 @@ export function buildPreDraftContext({project,snapshot,profile,targets,ownerPoli
     !profile.roles.some(r=>r.rolname===profile.migrationRole&&r.rolsuper===false))throw Error("Realistic non-superuser project profile required");
   if(!Array.isArray(targets)||!targets.length)throw Error("At least one target is required");
   if(!["expected-target","provided-snapshot"].includes(snapshotSource))throw Error("Unknown snapshot source");
+  if(!["create","modify"].includes(operation))throw Error("Unknown DDL operation");
   const issues=[],objects=[],unique=new Set();
   const issue=(severity,code,target,detail)=>issues.push({severity,code,target,detail});
   for(const text of targets) {
@@ -36,7 +37,9 @@ export function buildPreDraftContext({project,snapshot,profile,targets,ownerPoli
     const member=owner?profile.memberships.find(x=>x.member===profile.migrationRole&&x.parent===owner):null;
     if(!schema)issue("block","SCHEMA_UNKNOWN",label,"Schema missing in supplied catalog");
     if(!covered)issue("block","PROFILE_SCHEMA_UNCOVERED",label,"Recorded Production profile does not cover schema");
-    if(!matches.length)issue("block","OBJECT_UNKNOWN",label,"Object not found; verify creation intent or stale catalog");
+    if(!matches.length&&operation!=="create")issue("block","OBJECT_UNKNOWN",label,"Object not found; verify creation intent or stale catalog");
+    if(matches.length&&operation==="create")issue("block","OBJECT_ALREADY_EXISTS",label,"Object already exists in catalog; choose modify instead of create");
+    if(!matches.length&&operation==="create")issue("review","NEW_OBJECT_UNVERIFIED",label,"New object is not in recorded catalog; verify schema CREATE privilege and name collisions");
     if(matches.length>1)issue("block","OVERLOADED_OR_AMBIGUOUS",label,"Specify exact function identity arguments");
     if(obj&&owner!==profile.migrationRole)issue("review","OWNER_MISMATCH",label,"Owner differs from migration role; verify actual SET/ADMIN/INHERIT or scoped Kit recipe");
     if(obj?.security_definer&&!(obj.configuration??[]).some(x=>String(x).startsWith("search_path=")))
@@ -53,7 +56,7 @@ export function buildPreDraftContext({project,snapshot,profile,targets,ownerPoli
       triggers:related("triggers"),
       table:structure?.tables?.find(x=>x.schema_name===t.schema&&x.name===t.name)??null,
     } : {overloads:related("functions")};
-    objects.push({target:label,matched:matches.length,profileCoversSchema:covered,
+    objects.push({target:label,operation,matched:matches.length,profileCoversSchema:covered,
       availableSignatures:t.kind==="function"?all.map(x=>x.arguments):[],
       schemaOwner:schema?.owner??null,schemaAcl:schema?.acl??null,
       structuralCatalog:structure?definition:null,
@@ -69,12 +72,14 @@ export function buildPreDraftContext({project,snapshot,profile,targets,ownerPoli
         .map(r=>({name:r.name,mode:r.mode,role:r.role,reviewRequired:true})):[],
       authority:"AUTHORING_EVIDENCE_ONLY"});
   }
+  const migrator=profile.roles.find(r=>r.rolname===profile.migrationRole);
+  if(migrator.rolbypassrls===true)issue("review","MIGRATOR_BYPASSES_RLS","project","Recorded migration login has BYPASSRLS; test runtime roles separately for actual RLS enforcement");
   issue("review","LIVE_LEDGER_UNVERIFIED","project","Check actual Dev/Prod ledger, checksum and database identity read-only");
   issue("review","TARGET_ROLE_UNVERIFIED","project","Check actual migration login DDL capabilities and real PG17 replay");
   if(snapshot.schema===null)issue("review","SCHEMA_DEFINITIONS_MISSING","project","Permission-only snapshot lacks columns/indexes/constraints");
   if(snapshotSource==="expected-target")issue("review","EXPECTED_NOT_LIVE","project","migration-target.json is expected catalog, not live database proof");
   return {kind:"KIT_AI_PRE_DRAFT_CONTEXT",approved:false,releaseApproved:false,project,migrationName,
-    snapshotSource,recordedMigrationRole:profile.migrationRole,permissionBaseline:profile.baseline??null,
+    snapshotSource,operation,recordedMigrationRole:profile.migrationRole,permissionBaseline:profile.baseline??null,
     baselineChecked,blocked:issues.some(x=>x.severity==="block"),objects,issues,
     provenance:{snapshotSha256:digest(snapshot),profileSha256:digest(profile)},
     next:"Review unknowns and application consumers before SQL; afterwards Kit draft-check and disposable PG17 prepare are mandatory."};

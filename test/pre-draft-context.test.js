@@ -45,3 +45,21 @@ test("full Kit schema snapshot provides columns, indexes, trigger, and constrain
   assert.equal(r.objects[0].structuralCatalog.triggers.length,1);
   assert.ok(!r.issues.some(x=>x.code==="SCHEMA_DEFINITIONS_MISSING"));
 });
+
+test("explicit creation intent distinguishes missing new objects from missing ALTER target",()=>{
+  const missing=run(["relation:chain.new_table"]);
+  assert.equal(missing.blocked,true);
+  const created=run(["relation:chain.new_table"],{operation:"create"});
+  assert.equal(created.blocked,false);
+  assert.ok(created.issues.some(x=>x.code==="NEW_OBJECT_UNVERIFIED"));
+  const duplicate=run(["relation:chain.market"],{operation:"create"});
+  assert.equal(duplicate.blocked,true);
+  assert.ok(duplicate.issues.some(x=>x.code==="OBJECT_ALREADY_EXISTS"));
+  assert.throws(()=>run(["relation:chain.market"],{operation:"drop"}),/Unknown DDL operation/);
+});
+test("recorded migrator BYPASSRLS is disclosed rather than treated as runtime access",()=>{
+  const bypass={...profile,roles:[{rolname:"postgres",rolsuper:false,rolbypassrls:true}]};
+  const result=run(["relation:chain.market"],{profile:bypass});
+  assert.ok(result.issues.some(x=>x.code==="MIGRATOR_BYPASSES_RLS"));
+  assert.equal(result.releaseApproved,false);
+});
