@@ -18,7 +18,7 @@ export { preflightMigrationCapabilities } from "./capability.js";
 export { createOwnerMaintenancePolicy, acquireTemporaryOwnerRole, releaseTemporaryOwnerRole } from "./owner-maintenance.js";
 export { diffPermissions, planMigration, assertMigrationReview, generateMigrationSql } from "./migration-plan.js";
 export { createMigration } from "./create-migration.js";
-export { readTargetState, guardMigration } from "./guarded-plan.js";
+export { readTargetState, guardMigration, contractMigration, contractChangeMatches } from "./guarded-plan.js";
 export { resolveUpgradePrefix, restoreUpgradeRoles, compareUpgradeAcl, restoreUpgradeAcl } from "./upgrade-ci.js";
 export { normalizeMigrationRole } from "./migration-role.js";
 export { planDependencyImpact, planDependencyImpactAst, assertDependencyImpactReviewed } from "./dependency-impact.js";
@@ -32,3 +32,4 @@ export { deriveProductionPermissionProfile, projectPermissionCatalog, comparePro
  assertProductionPermissionProfile, verifyProductionPermissionFixture, renderDisposableRoleSetup } from "./production-permission-profile.js";
 
 export { renderDisposableAclSetup } from "./production-permission-profile.js";
+

@@ -46,7 +46,35 @@ function activeRole(body,offset) {
   const changes=[...body.matchAll(/\b(?:set\s+(?:local\s+)?role\s+([a-z_][a-z0-9_$]*)|reset\s+role)\s*;/ig)];
   return changes.filter(change=>change.index<offset).at(-1)?.[1]?.toLowerCase()??null;
 }
-export async function preflightRelationCapabilities(client,sql) {
+/** Probe only the database's actual CREATE POLICY capability, not its owner
+ * membership. This is provider-neutral: a PostgreSQL extension may authorize
+ * policy DDL without granting relation ownership. We never assume that it does.
+ *
+ * The probe creates a RESTRICTIVE, always-false policy under the current login
+ * in a SAVEPOINT and immediately rolls it back, even on permission errors.
+ * Only call within a Kit-managed transaction, for CREATE POLICY on an existing
+ * table, and without a pending SET ROLE. This never authorizes ALTER/DROP
+ * POLICY or any other relation DDL. No policy survives the probe.
+ */
+async function probeTransactionalCreatePolicy(client,relation) {
+  const [schema,table]=relation.split(".");
+  // normalizeQualified has already restricted both identifiers to [a-z0-9_$].
+  const qualified='\"'+schema+'\".\"'+table+'\"';
+  const savepoint="migration_kit_policy_capability_probe";
+  await client.query("SAVEPOINT "+savepoint);
+  try {
+    await client.query("CREATE POLICY migration_kit_capability_probe ON "+qualified+
+      " AS RESTRICTIVE FOR SELECT TO PUBLIC USING (false)");
+  } catch(error) {
+    throw new Error("migration capability denied: transactional CREATE POLICY probe failed for "+relation,
+      {cause:error});
+  } finally {
+    await client.query("ROLLBACK TO SAVEPOINT "+savepoint);
+    await client.query("RELEASE SAVEPOINT "+savepoint);
+  }
+}
+
+export async function preflightRelationCapabilities(client,sql,{transactionalPolicyProbe=false}={}) {
   const body=structuralSql(sql,{preserveQuotedIdentifiers:true});
   const writes=OWNED.flatMap(r=>targets(body,r)),created=NEW.flatMap(r=>targets(body,r));
   let login=null;
@@ -81,6 +109,15 @@ export async function preflightRelationCapabilities(client,sql) {
     }
     const owner=result.rows[0],role=activeRole(body,item.position);
     if(owner.can_alter||(role===owner.owner&&owner.can_set))continue;
+    // Never skip the permission check. A restricted, rolled-back real DDL
+    // probe is the only exception when catalog ownership isn't sufficient.
+    // SET ROLE preflights are not yet active in the current transaction.
+    const createPolicy=item.kind==="POLICY" &&
+      /^create\s+policy\s+/i.test(body.slice(item.position));
+    if(transactionalPolicyProbe && createPolicy && !role) {
+      await probeTransactionalCreatePolicy(client,item.name);
+      continue;
+    }
     throw Error("migration capability denied: cannot "+item.kind+" "+item.name+"; owner is "+owner.owner);
   }
   return {checked:writes.length,created:created.length};

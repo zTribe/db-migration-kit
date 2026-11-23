@@ -109,7 +109,14 @@ export function compareProductionPermissionProfiles(expected,actual){
  if(expected.schemaVersion!==1||actual.schemaVersion!==1||expected.project!==actual.project)
   throw Error("Production permission profile format/project mismatch");
  const checks=["postgresMajor","migrationRole","schemas","roles","memberships","schemaRights","databaseRights","baseline"];
- const findings=checks.filter(k=>json(expected[k])!==json(actual[k])).map(k=>({section:k,reason:"production_mismatch"}));
+ // PostgreSQL catalogs do not guarantee pg_auth_members row order. Compare the
+ // full role/grant multiset, including ADMIN, INHERIT and SET, not CSV order.
+ // Sorting keeps duplicate grants detectable and never masks privilege drift.
+ const section=(profile,k)=>k==="memberships"
+  ? [...profile[k]].sort((a,b)=>json(a)<json(b)?-1:json(a)>json(b)?1:0)
+  : profile[k];
+ const findings=checks.filter(k=>json(section(expected,k))!==json(section(actual,k)))
+  .map(k=>({section:k,reason:"production_mismatch"}));
  for(const section of SECTIONS)
   if(json(expected.catalog[section])!==json(actual.catalog[section]))
    findings.push({section,reason:"production_catalog_mismatch",expectedCount:expected.catalog[section].count,
@@ -168,8 +175,8 @@ export function renderDisposableRoleSetup(profile){
 
 /** Deterministic fixture ACL SQL. Pure generator: never executes or connects online. */
 export function renderDisposableAclSetup(profile){
- if(profile.schemaVersion!==1||profile.source!=="production")
-  throw Error("A reviewed Production-only fixture is required");
+ if(profile.schemaVersion!==1||!["production","dev"].includes(profile.source))
+  throw Error("A reviewed Dev or Production checkpoint fixture is required");
  const id=name=>{if(!VALID.test(name))throw Error("Unsafe fixture ACL identifier");return '"'+name+'"';};
  const parse=entry=>{
   const match=/^([a-z_0-9]*)=([a-zA-Z]+)\/([a-z_][a-z0-9_]*)$/.exec(entry);

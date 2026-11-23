@@ -11,14 +11,14 @@ import { explainPrepareFailure } from "../src/prepare-errors.js";
 import { safeTestEnvironment, confirmTargetedFixtureRan } from "../src/fixture-process.js";
 
 const [mode, project, ref = "HEAD", output, migrationName, reason, checksPath] = process.argv.slice(2);
-if (!["upgrade", "full", "production", "snapshot", "prepare"].includes(mode) || !["chat", "indexer"].includes(project)) {
-  throw new Error("Usage: db-migrate-kit-test <upgrade|full|production|snapshot|prepare> <chat|indexer> [base-ref] [output-or-candidate] [migration-name] [review-reason] [checks.sql]");
+if (!["upgrade", "full", "production", "checkpoints", "snapshot", "prepare"].includes(mode) || !["chat", "indexer"].includes(project)) {
+  throw new Error("Usage: db-migrate-kit-test <upgrade|full|production|checkpoints|snapshot|prepare> <chat|indexer> [base-ref] [output-or-candidate] [migration-name] [review-reason] [checks.sql]");
 }
-const base = mode !== "full" && mode !== "production"
+const base = mode !== "full" && mode !== "production" && mode !== "checkpoints"
   ? execFileSync("git", ["rev-parse", "--verify", "--end-of-options", ref + "^{commit}"], { encoding: "utf8" }).trim()
   : "";
 const docker = (...args) => execFileSync("docker", args, { encoding: "utf8" }).trim();
-const pattern = mode==="production" ? "^Production permission replay" :
+const pattern = (mode==="production"||mode==="checkpoints") ? "^Production permission replay" :
  mode !== "full" ? "^PR migrations upgrade" :
   project === "chat" ? "^shared migration runner applies the full" : "^Indexer replays the full";
 const file = project === "chat" ? "test/chat-migrate.integration.test.mjs" : "test/migration-runner.integration.mjs";
@@ -30,7 +30,8 @@ async function runFixture(extraEnv = {}) {
   // PostgreSQL 16+ forbids demoting the cluster's bootstrap superuser.
   // Production replay uses a separate bootstrap identity, so "postgres" can
   // be demoted to the exact non-superuser attributes captured from Supabase.
-  const bootstrapRole = mode === "production" ? "kit_profile_bootstrap" : "postgres";
+  const privilegeFixture = mode === "production" || mode === "checkpoints";
+  const bootstrapRole = privilegeFixture ? "kit_profile_bootstrap" : "postgres";
   docker("run", "--rm", "-d", "--name", name, "-e", "POSTGRES_PASSWORD=postgres",
     "-e", "POSTGRES_USER=" + bootstrapRole,
     "-p", "127.0.0.1::5432", "postgres:17");
@@ -44,7 +45,7 @@ async function runFixture(extraEnv = {}) {
     }
     const port = docker("port", name, "5432/tcp").split(":").at(-1);
     if (!/^\d+$/.test(port)) throw new Error("Could not resolve the isolated PostgreSQL port");
-    if (mode === "production") {
+    if (privilegeFixture) {
       // All setup is confined to the just-created disposable Docker cluster.
       // Historical migrations must still run under the postgres login; this
       // separate role is NOT the immutable cluster bootstrap identity.
@@ -62,8 +63,8 @@ async function runFixture(extraEnv = {}) {
       MIGRATION_SNAPSHOT_OUTPUT:mode==="snapshot"?resolve(output??"before.json"):"",
       MIGRATION_LOCAL_FULL:mode==="full"?"1":"",
       MIGRATION_LOCAL_UPGRADE:mode==="upgrade"?"1":"",
-      MIGRATION_VERIFY_PRODUCTION_PROFILE:mode==="production"?"1":"",
-      MIGRATION_FIXTURE_BOOTSTRAP_URL:mode==="production"?bootstrapUrl:"",
+      MIGRATION_VERIFY_PRODUCTION_PROFILE:privilegeFixture?"1":"",
+      MIGRATION_FIXTURE_BOOTSTRAP_URL:privilegeFixture?bootstrapUrl:"",
       MIGRATION_CANDIDATE_CAPTURE:"",MIGRATION_PREPARE_CHECKS:"",
       ...extraEnv
     });
@@ -91,7 +92,14 @@ async function runFixture(extraEnv = {}) {
   }
 }
 
-if (mode !== "prepare") {
+if (mode === "checkpoints") {
+  // Each source gets its own disposable PG17 cluster. A prior Production run
+  // can never contaminate the Dev permission model or vice versa.
+  for (const source of ["dev","production"]) {
+    console.log("[kit:checkpoints] replaying "+project+" under "+source+" privileges");
+    await runFixture({MIGRATION_RECORDED_CHECKPOINT_SOURCE:source});
+  }
+} else if (mode !== "prepare") {
   await runFixture();
 } else {
   if (!output || !/^[a-z][a-z0-9_]*$/.test(migrationName ?? "") || !reason?.trim() || !checksPath) {

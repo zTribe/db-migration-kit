@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import pg from "pg";
-import { applyMigrations, guardMigration, loadMigrationConfig, planMigration, readTargetState } from "../src/index.js";
+import { applyMigrations, guardMigration, contractMigration, loadMigrationConfig, planMigration, readTargetState } from "../src/index.js";
 
 test("config → generated migration → rollback on unauthorized privilege → verified commit", {
   skip: !process.env.PG_TEST_URL,
@@ -107,5 +107,100 @@ test("review accepts an equivalent migration role under a different login name",
   } finally {
     try { await client.query("ROLLBACK"); }
     finally { await client.end(); }
+  }
+});
+
+test("PG17 portable guard verifies reviewed ACL before, after, and rollback", {
+  skip: !process.env.PG_TEST_URL,
+}, async () => {
+  const { normalizeMigrationRole } = await import("../src/migration-role.js");
+  const client = new pg.Client({ connectionString: process.env.PG_TEST_URL });
+  await client.connect();
+  const schema = "kit_portable_acl_probe";
+  try {
+    await client.query("BEGIN");
+    await client.query("CREATE SCHEMA " + schema);
+    await client.query("CREATE FUNCTION " + schema + ".probe() RETURNS integer LANGUAGE sql AS 'SELECT 1'");
+    await client.query("REVOKE EXECUTE ON FUNCTION " + schema + ".probe() FROM PUBLIC");
+    const {rows:[identity]}=await client.query("SELECT current_user AS role");
+    const capture=async()=>normalizeMigrationRole(await readTargetState(client,[schema]),identity.role);
+    const before=await capture();
+    await client.query("SAVEPOINT reviewed_acl");
+    await client.query("GRANT EXECUTE ON FUNCTION " + schema + ".probe() TO pg_monitor");
+    const after=await capture();
+    await client.query("ROLLBACK TO SAVEPOINT reviewed_acl");
+    const plan=planMigration(before,after);
+    assert.ok(plan.changes.some(change=>change.section==="functions"),
+      "Fixture must really change a function ACL");
+    const guard=guardMigration("reviewed_acl_probe",before,after,{
+      digest:plan.digest,reason:"Portable PostgreSQL ACL regression"
+    });
+    await guard.before(client);
+    await client.query("GRANT EXECUTE ON FUNCTION " + schema + ".probe() TO pg_monitor");
+    await guard.after(client);
+    await client.query("ROLLBACK TO SAVEPOINT reviewed_acl");
+    await client.query("GRANT EXECUTE ON FUNCTION " + schema + ".probe() TO pg_signal_backend");
+    await assert.rejects(guard.before(client),/precondition differs/,
+      "Pre-existing unreviewed privilege must reject the migration before DDL");
+    await client.query("ROLLBACK TO SAVEPOINT reviewed_acl");
+    assert.deepEqual(planMigration(await capture(),before).changes,[]);
+  } finally {
+    try { await client.query("ROLLBACK"); }
+    finally { await client.end(); }
+  }
+});
+
+
+test("PG17 Kit Lite contract checks actual grants, RLS and rollback without historical ACL precondition matching",{
+  skip: !process.env.PG_TEST_URL,
+},async()=>{
+  const {normalizeMigrationRole}=await import("../src/migration-role.js");
+  const client=new pg.Client({connectionString:process.env.PG_TEST_URL});
+  await client.connect();
+  const schema="kit_lite_contract_probe";
+  try {
+    await client.query("BEGIN");
+    await client.query("CREATE SCHEMA "+schema);
+    await client.query("CREATE FUNCTION "+schema+".probe(p_value text) RETURNS integer LANGUAGE sql "+
+      "SECURITY INVOKER SET search_path=pg_catalog AS 'SELECT 1'");
+    await client.query("REVOKE EXECUTE ON FUNCTION "+schema+".probe(text) FROM PUBLIC");
+    const {rows:[identity]}=await client.query("SELECT current_user AS role");
+    const capture=async()=>normalizeMigrationRole(await readTargetState(client,[schema]),identity.role);
+    const before=await capture();
+    await client.query("SAVEPOINT grant_review");
+    await client.query("GRANT EXECUTE ON FUNCTION "+schema+".probe(text) TO pg_monitor");
+    const after=await capture();
+    await client.query("ROLLBACK TO SAVEPOINT grant_review");
+    const plan=planMigration(before,after);
+    const guard=contractMigration("kit_lite_acl",before,after,
+      {digest:plan.digest,reason:"Review exact added pg_monitor grant"});
+    await guard.before(client);
+    await client.query("GRANT EXECUTE ON FUNCTION "+schema+".probe(text) TO pg_monitor");
+    await guard.after(client);
+    await client.query("ROLLBACK TO SAVEPOINT grant_review");
+    await guard.before(client);
+    await client.query("GRANT EXECUTE ON FUNCTION "+schema+".probe(text) TO pg_monitor");
+    await client.query("GRANT EXECUTE ON FUNCTION "+schema+".probe(text) TO pg_signal_backend");
+    await assert.rejects(guard.after(client),/unexpected catalog objects|unexpected grants/);
+    await client.query("ROLLBACK TO SAVEPOINT grant_review");
+    await guard.before(client);
+    await client.query("GRANT EXECUTE ON FUNCTION "+schema+".probe(text) TO PUBLIC");
+    await assert.rejects(guard.after(client),/unexpected grants|unexpected catalog objects/);
+    await client.query("ROLLBACK TO SAVEPOINT grant_review");
+    assert.deepEqual(planMigration(await capture(),before).changes,[]);
+    await client.query("SAVEPOINT unsafe_default");
+    const prior=await capture();
+    await client.query("CREATE FUNCTION "+schema+".unsafe_default() RETURNS integer LANGUAGE sql AS 'SELECT 1'");
+    const exposed=await capture();
+    await client.query("ROLLBACK TO SAVEPOINT unsafe_default");
+    const publicPlan=planMigration(prior,exposed);
+    const publicGuard=contractMigration("kit_lite_public_default",prior,exposed,
+      {digest:publicPlan.digest,reason:"Reject implicit PostgreSQL PUBLIC EXECUTE default"});
+    await publicGuard.before(client);
+    await client.query("CREATE FUNCTION "+schema+".unsafe_default() RETURNS integer LANGUAGE sql AS 'SELECT 1'");
+    await assert.rejects(publicGuard.after(client),/unreviewed PUBLIC EXECUTE/);
+    await client.query("ROLLBACK TO SAVEPOINT unsafe_default");
+  } finally {
+    try { await client.query("ROLLBACK"); } finally { await client.end(); }
   }
 });

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {parseLiveEnvironmentSnapshot,compareLiveEnvironmentSnapshots} from "../src/live-environment-snapshot.js";
+import {parseLiveEnvironmentSnapshot,compareLiveEnvironmentSnapshots,liveSnapshotToKitTargetState} from "../src/live-environment-snapshot.js";
 function snapshot(){return {
  postgres_version:"17.11",database_acl:{owner:"postgres",acl:"{postgres=CTc/postgres}"},
  roles:[{rolname:"postgres",rolsuper:false}],memberships:[],schemas:[],relations:[],
@@ -49,4 +49,34 @@ test("function settings are not echoed in diagnostics",()=>{
 test("duplicate identities rejected",()=>{
  const dev=snapshot(),prod=snapshot();dev.roles.push(dev.roles[0]);
  assert.throws(()=>compareLiveEnvironmentSnapshots(dev,prod),/Duplicate roles/);
+});
+
+test("Dev ahead with immutable Production ledger prefix is pending upgrade, not checksum corruption",()=>{
+ const dev=snapshot(),prod=snapshot();
+ dev.migration_ledger.push({version:"002_new",name:"002_new.sql",checksum:"b".repeat(64),source:"migration"});
+ const report=compareLiveEnvironmentSnapshots(dev,prod);
+ assert.equal(report.counts.migration_blocker,0);
+ assert.equal(report.counts.upgrade_pending,1);
+ assert.equal(report.status,"review");
+ assert.equal(report.findings.find(x=>x.section==="migration_ledger").severity,"upgrade_pending");
+ const reverse=compareLiveEnvironmentSnapshots(prod,dev);
+ assert.equal(reverse.status,"block");
+});
+test("v2 full snapshot is strictly shaped and maps to Kit authoring context",()=>{
+ const full={...snapshot(),snapshot_format:"ztribe-supabase-kit-v2",project:"chat",pg_major:17,
+   schemas_requested:["app"],schemas_missing:[],schemas:[{schema_name:"app",owner:"postgres",acl:null}],
+   relations:[{schema_name:"app",name:"messages",relkind:"r",owner:"postgres",rls:true,force_rls:false,acl:null}],
+   structural_catalog:{tables:[{schema_name:"app",name:"messages",kind:"r"}],
+     columns:[],constraints:[],indexes:[],triggers:[],functions:[],policies:[],publications:[]}};
+ const contents=JSON.stringify(full);
+ const parsed=parseLiveEnvironmentSnapshot(contents);
+ const state=liveSnapshotToKitTargetState(parsed);
+ assert.equal(state.schema.tables.length,1);
+ assert.equal(state.permissions.objects[0].schema,"app");
+ assert.equal(state.permissions.objects[0].rls,true);
+ assert.equal(state.sourceInfo.newestLedger,"001_test");
+ const broken={...full,structural_catalog:{tables:[]}};
+ assert.throws(()=>parseLiveEnvironmentSnapshot(JSON.stringify(broken)),/Incomplete v2 structural catalog/);
+ const missing={...full,schemas_missing:["realtime"]};
+ assert.throws(()=>parseLiveEnvironmentSnapshot(JSON.stringify(missing)),/Missing requested schema/);
 });

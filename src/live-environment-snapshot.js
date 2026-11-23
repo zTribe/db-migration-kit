@@ -41,7 +41,53 @@ export function parseLiveEnvironmentSnapshot(contents){
   for(const row of snapshot.migration_ledger)
     if(["version","name","checksum","source"].some(key=>typeof row[key]!=="string"))
       throw Error("Invalid migration ledger row");
+  if(snapshot.snapshot_format==="ztribe-supabase-kit-v2"){
+    if(!["chat","indexer"].includes(snapshot.project)||snapshot.pg_major!==17)
+      throw Error("Invalid v2 snapshot project or PostgreSQL major");
+    if(!Array.isArray(snapshot.schemas_requested)||!snapshot.schemas_requested.length||
+       !Array.isArray(snapshot.schemas_missing)||snapshot.schemas_missing.length)
+      throw Error("Missing requested schema in v2 snapshot");
+    const structural=snapshot.structural_catalog;
+    for(const key of ["tables","columns","constraints","indexes","triggers","functions","policies","publications"])
+      if(!Array.isArray(structural?.[key]))throw Error("Incomplete v2 structural catalog: "+key);
+    const present=new Set(snapshot.schemas.map(x=>x.schema_name));
+    for(const schema of snapshot.schemas_requested)
+      if(!present.has(schema))throw Error("Requested schema absent in v2 snapshot: "+schema);
+  }
   return snapshot;
+}
+/** Map the full Supabase SQL Editor v2 export into the existing Kit pre-draft schema. */
+export function liveSnapshotToKitTargetState(snapshot) {
+  if(snapshot?.snapshot_format!=="ztribe-supabase-kit-v2")
+    throw Error("Only v2 full snapshots can become pre-draft context");
+  // Reuse the strict parser checks instead of accepting partial catalogs.
+  const captured=parseLiveEnvironmentSnapshot(JSON.stringify(snapshot));
+  return {
+    version:1,
+    schema:captured.structural_catalog,
+    permissions:{
+      schemas:captured.schemas.map(({schema_name,owner,acl})=>({schema:schema_name,owner,acl})),
+      objects:captured.relations.map(({schema_name,name,relkind,owner,rls,force_rls,acl})=>
+        ({schema:schema_name,name,kind:relkind,owner,rls,force_rls,acl})),
+      functions:captured.functions.map(({schema_name,name,arguments:identityArgs,owner,
+        security_definer, function_settings,acl})=>({schema:schema_name,name,arguments:identityArgs,
+        owner,security_definer,configuration:function_settings,acl})),
+      columnPrivileges:captured.column_acls.map(({schema_name,table_name,column_name,acl})=>
+        ({schema:schema_name,relation:table_name,column_name,acl})),
+      policies:captured.policies.map(({schemaname,tablename,policyname,permissive,roles,cmd,qual,with_check})=>
+        ({schema:schemaname,tablename,policyname,permissive,roles,cmd,qual,with_check})),
+      roles:captured.roles,
+      memberships:captured.memberships,
+      defaultPrivileges:captured.default_acls.map(({owner,schema_name,kind,acl})=>
+        ({owner,schema:schema_name,kind,acl})),
+      databasePrivileges:[{scope:"current",owner:captured.database_acl?.owner??null,
+        acl:captured.database_acl?.acl??null}]
+    },
+    sourceInfo:{kind:"SUPABASE_SQL_EDITOR_SNAPSHOT",source:captured.project,
+      collectedAt:captured.collected_at??null,
+      newestLedger:captured.migration_ledger.at(-1)?.version??null,
+      schemas:captured.schemas_requested}
+  };
 }
 function stable(value){
   if(Array.isArray(value))return value.map(stable);
@@ -94,21 +140,30 @@ export function compareLiveEnvironmentSnapshots(dev,production){
     findings.push(finding("database_acl","current_database",dev.database_acl,production.database_acl));
   const before=keyed(dev.migration_ledger,["version"],"migration_ledger");
   const after=keyed(production.migration_ledger,["version"],"migration_ledger");
+  // Dev can legitimately be ahead of Production. This is a pending upgrade,
+  // not a checksum mismatch. A missing middle version or Production-ahead
+  // history is not automatically safe and remains a blocker.
+  const devHasProductionPrefix=production.migration_ledger.length>0 &&
+    production.migration_ledger.every((p,i)=>dev.migration_ledger[i]?.version===p.version);
   for(const version of [...new Set([...before.keys(),...after.keys()])].sort()){
     const a=before.get(version),b=after.get(version);
-    if(!a||!b||a.name!==b.name||a.checksum!==b.checksum)
+    if(!a||!b){
+      const expectedDevSuffix=Boolean(a&&!b&&devHasProductionPrefix);
+      findings.push(finding("migration_ledger",version,a,b,
+        expectedDevSuffix?"upgrade_pending":"migration_blocker"));
+    }else if(a.name!==b.name||a.checksum!==b.checksum)
       findings.push(finding("migration_ledger",version,a,b,"migration_blocker"));
     else if(a.source!==b.source)
       findings.push({section:"migration_ledger",key:version,kind:"source_different",
         severity:"information",fields:["source"]});
     // applied_at never indicates SQL drift.
   }
-  const levels=["migration_blocker","compatibility_review","permission_review","review","information"];
+  const levels=["migration_blocker","compatibility_review","permission_review","upgrade_pending","review","information"];
   const counts=Object.fromEntries(levels.map(level=>[level,
     findings.filter(item=>item.severity===level).length]));
   return {schema_version:1,
     status:counts.migration_blocker?"block":
-      counts.compatibility_review||counts.permission_review||counts.review?"review":"aligned",
+      counts.compatibility_review||counts.permission_review||counts.upgrade_pending||counts.review?"review":"aligned",
     counts,migration_counts:{dev:dev.migration_ledger.length,production:production.migration_ledger.length},
     findings,limitations:[
       "SQL Editor login may not match the Railway migration login.",

@@ -145,7 +145,7 @@ const config = {
 
 ## Adoption status
 
-The standalone repo has real PostgreSQL 17 tests for the generic Runner and simulated Chat/Indexer adapter workflows. **Neither live Chat nor live Indexer repo has yet switched to consume this standalone package.** CI success here must not be interpreted as full consumer compatibility or production readiness. Never run against Production until full cross-repo tests and a separately authorized deployment.
+The standalone repo has PostgreSQL 17 integration tests for the Runner and simulated adapters. Chat and Indexer consume a separately pinned vendored copy of this package; Kit test success alone never proves consumer compatibility or production readiness. Never run against Production until full cross-repo tests and separately authorized deployment.
 
 ### Declarative migration planning
 
@@ -183,6 +183,31 @@ continue through the existing Runner path. Use comparable PostgreSQL
 instances and schema coverage because raw role and ACL state includes
 environment-specific entries.
 
+### Kit Lite: review actual transactional security changes
+
+Set `"reviewMode": "contract"` alongside `historicalManifest` to replace the
+legacy cross-environment whole-catalog Before/After equality gate. The default
+`strict` mode remains available for diagnostics and existing consumers.
+
+Both modes still require an immutable historical checksum manifest and one
+review sidecar per new SQL file, binding SQL checksum, reviewed before/after
+catalog evidence, plan digest and reason. **Contract mode never treats a
+sidecar alone as permission to deploy**. During a migration transaction it
+captures the real live catalogs immediately before and after execution and
+rejects unexpected catalog objects, Owner/SECURITY DEFINER changes and ACL
+entitlement changes. ACL comparisons ignore historical GRANTOR provenance;
+only the explicitly reviewed `@migration-role` placeholder is mapped to the
+current migration login. Newly changed functions cannot gain unreviewed
+PUBLIC EXECUTE, and newly changed policies require live RLS enabled.
+
+The normal Runner **still** checks database identity, ledger/checksums,
+transaction boundaries, real Owner/relation capabilities, temporary Owner
+leases, service-only function ACLs and failure rollback. The consuming
+Chat/Indexer project **must** run non-superuser PG17 upgrade, rollback and
+business/security assertions for each candidate before release; contract mode
+does not replace those tests. No Dev/Production migration is authorized by
+switching this config option.
+
 For default enforcement, configure `historicalManifest` as a JSON map of
 existing migration versions to their SHA-256 checksums. Freeze that map at
 adoption. Every subsequent SQL migration needs a sibling
@@ -205,3 +230,62 @@ This read-only preflight reports machine-readable issue `code`, `severity`, `mes
 ### Owner-maintenance recipe statement boundary
 
 For new migration candidates, a reviewed Owner recipe authorizes **only** the temporary schema CREATE grant, local role switch, reviewed FUNCTION DDL, role reset and CREATE revoke, in approved order. Other statements (including DO/CALL/SELECT or dynamic DDL) are rejected. Keep unrelated SQL in an independently reviewed migration. `legacyDoVersions` is an explicit compatibility escape hatch for exact preexisting reviewed migration versions with immutable checksum protection; never enable it for new migration candidates. It applies only to historical forMigration() replay, not to new AI candidates. DO/CALL in ordinary candidates generates a manual-review diagnostic and must be validated against PG17.
+
+## Transactional CREATE POLICY capability preflight
+
+For **new, reviewed transactional migrations** only, Kit checks the relation
+owner as usual. PostgreSQL deployments can delegate `CREATE POLICY` through
+database-side authorization without changing catalog ownership. When an
+existing relation fails the ownership preflight, Kit can perform a **generic**
+capability test in the same migration transaction: savepoint → create a
+temporary **RESTRICTIVE, always-false** policy on the target relation →
+roll back to savepoint → release savepoint. Only a successful real SQL check
+permits the migration to proceed. The policy never commits.
+
+This applies to any relation and schema; there are no provider-specific,
+business-specific, role-specific or table-name allowlists. Non-transactional
+migrations, `ALTER/DROP POLICY`, pending `SET ROLE`, missing tables and
+all other DDL remain governed by the original fail-closed checks. The actual
+migration statement must still execute successfully, pass its Kit checks and
+the non-superuser PostgreSQL upgrade tests.
+
+
+## Advisory pre-draft context
+
+Before writing SQL: `db-migrate-kit pre-draft --config=db/migration-kit.config.json --target=relation:chain.example '--target=function:chain.example_trigger()'` (Chat uses `app` targets). Optional `--snapshot=/path/to/catalog.json --snapshot-source=provided-snapshot` reads an external catalog. Default `migration-target.json` is an **expected target**, not proof of the current database. Use `--operation=create` for a new object not yet in the catalog; default is `modify`, which blocks missing objects. Passing `--snapshot` requires `--snapshot-source=provided-snapshot`. This command is read-only, checks the recorded historical permission-profile prefix/checksum, surfaces owner, ACL, RLS, policies, and missing facts, and never approves migration capability. Inspect real ledger/owner credentials and run PG17 `prepare` afterward.
+
+### Stable permission checkpoint semantics
+
+The recorded permission profile is a **versioned historical checkpoint**, not a live-state cache to refresh after every SQL migration. Replay immutable historical migrations through `profile.baseline.version`, restore roles/Owner/ACL/RLS **at that checkpoint**, then run all remaining historical migrations and candidate SQL in order. A later migration count is normal; `replayPlan` explicitly identifies that suffix and is advisory until the disposable PG17 test runs. Re-capture only for an independently changed out-of-band permission/managed object state, identity or authority drift, and always capture structure, permissions and migration ledger consistently. Supabase SQL Editor identity alone does not prove the real migration login's capabilities.
+
+### v2 SQL Editor export in pre-draft CLI
+
+Use a Kit-compatible **single-row** SQL Editor CSV export with column `complete_snapshot`; pass it to `db-migrate-kit pre-draft --snapshot=chat-prod.csv --snapshot-source=provided-snapshot --target=relation:app.messages`. The v2 exporter includes the unchanged `postgres_version`, `roles`, `memberships`, `schemas`, `relations`, `column_acls`, `functions`, `policies`, `default_acls`, `extensions`, `database_acl`, `migration_ledger` fields expected by `parseLiveEnvironmentSnapshot`, plus an eight-section `structural_catalog`. Only v2 exports with all requested schemas present become pre-draft target state. The recorded Production permission checkpoint can predate the current ledger; a Dev migration suffix ahead of Production is `upgrade_pending` (review), while checksum disagreements and divergent historical ledgers remain blockers. Exported function definitions may contain embedded credentials: inspect before sharing.
+
+### Supabase managed Realtime policy pre-draft
+
+`--operation=policy-create` is a **narrow advisory** mode for Chat `relation:realtime.messages`
+with a complete `--snapshot-source=provided-snapshot` SQL Editor export showing
+`supabase_realtime_admin` as Owner and the recorded migration role `postgres`.
+It avoids a false `PROFILE_SCHEMA_UNCOVERED` hard block solely because the
+reusable business permission profile covers `app` rather than Supabase's managed
+`realtime` schema. **No other schema, table, role, or operation receives the
+exception.** It cannot assert Supabase's provider-level `supautils` delegation:
+the Kit's transactional `CREATE POLICY` probe on the real executing role,
+the immutable migration ledger and effective RLS behavior remain mandatory.
+`ALTER TABLE realtime.messages` is never permitted by this special mode.
+See https://supabase.com/kb/troubleshooting/realtime-must-be-owner-of-table-messages .
+
+### Double environment PG17 permission checkpoints
+
+Use `db-migrate-kit-test checkpoints chat` or `db-migrate-kit-test checkpoints indexer`
+after saving the immutable `db/permission-checkpoints/dev.json` and
+`db/permission-checkpoints/production.json` evidence. The Kit runs the existing
+production-permission replay entrypoint twice in **separate disposable PostgreSQL
+17 Docker clusters**, selecting `MIGRATION_RECORDED_CHECKPOINT_SOURCE=dev`
+and `production` respectively. The project integration test is responsible
+for replaying the immutable migration prefix, applying the selected model's
+non-superuser role/ACL setup, verifying recorded catalog/ledger at the
+checkpoint, then testing pending migrations, rollback protection and idempotence.
+Unlike `production`, `checkpoints` is an explicit two-model release gate.
+Live Supabase delegated policy operations still require provider-login validation.

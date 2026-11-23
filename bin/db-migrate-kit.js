@@ -4,6 +4,41 @@ import { resolve } from "node:path";
 import { readTargetState, checksumText, createMigration, loadMigrationConfig, planMigration, assertMigrationReview, generateMigrationSql, applyMigrations, auditMigrations, inspectMigrations, inspectRuntimeSecurity, verifyDatabaseTarget, planDependencyImpact, planDependencyImpactAst, assertDependencyImpactReviewed } from "../src/index.js";
 
 const [command = "status", ...args] = process.argv.slice(2);
+if (command === "pre-draft") {
+  const { dirname,join,resolve:pathResolve } = await import("node:path");
+  const { buildPreDraftContext } = await import("../src/pre-draft-context.js");
+  const accepted=["--config=","--snapshot=","--profile=","--target=","--name=","--snapshot-source=","--operation="];
+  if(args.some(x=>!accepted.some(a=>x.startsWith(a))))throw Error("Unsupported pre-draft CLI argument");
+  const get = name => args.find(x=>x.startsWith("--"+name+"="))?.slice(name.length+3);
+  const configPath=resolve(process.cwd(),get("config")??"db/migration-kit.config.json");
+  const config=await loadMigrationConfig(configPath);
+  const project=config.schema==="app"?"chat":config.schema==="chain"?"indexer":null;
+  if(!project)throw Error("pre-draft needs Chat or Indexer migration config");
+  const dir=dirname(configPath);
+  const profile=JSON.parse(await readFile(pathResolve(dir,get("profile")??"production-permission-profile.json"),"utf8"));
+  const rawSnapshot=await readFile(pathResolve(dir,get("snapshot")??"migration-target.json"),"utf8");
+  const { parseLiveEnvironmentSnapshot,liveSnapshotToKitTargetState }=
+    await import("../src/live-environment-snapshot.js");
+  const parsedSnapshot=rawSnapshot.trimStart().startsWith("{")?JSON.parse(rawSnapshot):null;
+  const snapshot=parsedSnapshot?.permissions?parsedSnapshot:
+    liveSnapshotToKitTargetState(parseLiveEnvironmentSnapshot(rawSnapshot));
+  const ownerPolicy=JSON.parse(await readFile(join(dir,"owner-maintenance-policy.json"),"utf8"));
+  const baseline=profile.baseline, filename=baseline?.version+".sql";
+  const index=config.files.indexOf(filename);
+  if(index<0||index+1!==baseline.count)throw Error("Permission profile baseline does not match historical migration prefix");
+  if(checksumText(await readFile(join(config.directory,filename),"utf8"))!==baseline.checksum)
+    throw Error("Permission profile baseline SQL checksum drift");
+  const source=get("snapshot-source")??"expected-target";
+  if(source==="provided-snapshot"&&!get("snapshot"))throw Error("Supply --snapshot for external catalog");
+  if(get("snapshot")&&source!=="provided-snapshot")throw Error("Explicit --snapshot-source=provided-snapshot required with --snapshot");
+  const report=buildPreDraftContext({project,snapshot,profile,ownerPolicy,
+    targets:args.filter(x=>x.startsWith("--target=")).map(x=>x.slice(9)),
+    snapshotSource:source,operation:get("operation")??"modify",migrationName:get("name")??null,
+    baselineChecked:true,historyAfterBaseline:config.files.length-baseline.count});
+  console.log(JSON.stringify(report,null,2));
+  if(report.blocked)process.exitCode=2;
+  process.exit();
+}
 if (command === "draft-check") {
   const { dirname, relative, isAbsolute } = await import("node:path");
   const { checkAiMigrationDraft } = await import("../src/ai-draft-check.js");
