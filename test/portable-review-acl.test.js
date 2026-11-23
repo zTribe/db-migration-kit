@@ -18,34 +18,45 @@ const reviewed = { changes:[change(reviewedBase, reviewedBase.slice(0,-1)+","+ad
 const observed = { changes:[change(runtimeBase, runtimeBase.slice(0,-1)+","+added+"}")], structure:[] };
 
 test("portable guard accepts identical new EXECUTE grant despite unchanged historical ACL grantor",()=>{
-  assert.equal(portableReviewDeltaMatches(reviewed,observed),true);
+  assert.equal(portableReviewDeltaMatches(reviewed,observed,"postgres"),true);
 });
 test("portable guard rejects missing, extra or revoked privileges",()=>{
   const before=runtimeBase;
-  assert.equal(portableReviewDeltaMatches(reviewed,{...observed,changes:[change(before,before)]}),false);
+  assert.equal(portableReviewDeltaMatches(reviewed,{...observed,changes:[change(before,before)]},"postgres"),false);
   assert.equal(portableReviewDeltaMatches(reviewed,{...observed,changes:[
     change(before,before.slice(0,-1)+","+added+",anon=X/@migration-role}")
-  ]}),false);
+  ]},"postgres"),false);
   assert.equal(portableReviewDeltaMatches(reviewed,{...observed,changes:[
     change(before,before.replace("anon=X/@migration-role,","").slice(0,-1)+","+added+"}")
-  ]}),false);
+  ]},"postgres"),false);
 });
 test("portable guard rejects wrong grantor, changed grant options, object definition and unsafe ACL syntax",()=>{
   const after=runtimeBase.slice(0,-1)+","+added+"}";
   assert.equal(portableReviewDeltaMatches(reviewed,{...observed,changes:[
     change(runtimeBase,after.replace(added,"chat_api_runtime_owner=X/postgres"))
-  ]}),false);
+  ]},"postgres"),false);
   assert.equal(portableReviewDeltaMatches(reviewed,{...observed,changes:[
     change(runtimeBase,after.replace(added,"chat_api_runtime_owner=X*/@migration-role"))
-  ]}),false);
+  ]},"postgres"),false);
   assert.equal(portableReviewDeltaMatches(reviewed,{...observed,changes:[
     change(runtimeBase,after,{identity:["app","other_function",""]})
-  ]}),false);
+  ]},"postgres"),false);
   assert.equal(portableReviewDeltaMatches(reviewed,{...observed,changes:[
     change(runtimeBase,after,{desired:{...observed.changes[0].desired,security_definer:true}})
-  ]}),false);
+  ]},"postgres"),false);
   assert.equal(portableReviewDeltaMatches(reviewed,{...observed,changes:[
     change(runtimeBase,'{"chat_api_runtime_owner=X/@migration-role"}')
-  ]}),false);
-  assert.equal(portableReviewDeltaMatches(reviewed,{...observed,structure:[{section:"policies"}]}),false);
+  ]},"postgres"),false);
+  assert.equal(portableReviewDeltaMatches(reviewed,{...observed,structure:[{section:"policies"}]},"postgres"),false);
+});
+
+test("portable guard rejects pre-existing privilege drift even if no SQL changes it",()=>{
+  const extra="outside_role=X/@migration-role";
+  const base=runtimeBase.slice(0,-1)+","+extra+"}";
+  const after=base.slice(0,-1)+","+added+"}";
+  assert.equal(portableReviewDeltaMatches(reviewed,
+    {changes:[change(base,after)],structure:[]},"postgres"),false);
+});
+test("portable guard only permits identity overlap for the actual migrator",()=>{
+  assert.equal(portableReviewDeltaMatches(reviewed,observed,"some_other_migrator"),false);
 });
