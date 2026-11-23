@@ -306,6 +306,33 @@ export function contractMigration(version,before,after,review) {
       for (const [key,change] of expectedChanges)
         if (!contractChangeMatches(change,observedChanges.get(key),identity.role))
           throw Error("Migration "+version+" contract changed unexpected grants, owner or security properties: "+key);
+      // PostgreSQL defaults EXECUTE on new functions to PUBLIC. A reviewed
+      // new or changed RPC must not silently inherit that access. An explicit
+      // PUBLIC EXECUTE in the reviewed desired ACL is required to allow it.
+      for (const change of expected.changes.filter(x=>x.section==="functions"&&x.desired)) {
+        const [schema,name,args]=change.identity;
+        const signature=schema+"."+name+"("+args+")";
+        const reviewedAccess=aclEntitlements(change.desired.acl,identity.role);
+        const explicitlyPublic=[...reviewedAccess].some(x=>JSON.parse(x)[0]==="" && JSON.parse(x)[1]==="X");
+        const {rows:[access]}=await client.query(
+          "SELECT coalesce((SELECT EXISTS (SELECT 1 FROM pg_catalog.aclexplode("+
+          "coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) g "+
+          "WHERE g.grantee=0 AND g.privilege_type='EXECUTE') "+
+          "FROM pg_catalog.pg_proc p WHERE p.oid=pg_catalog.to_regprocedure($1)),true) AS public_execute",
+          [signature]);
+        if(access?.public_execute && !explicitlyPublic)
+          throw Error("Migration "+version+" exposed unreviewed PUBLIC EXECUTE: "+signature);
+      }
+      // Policies cannot protect any data while their relation has RLS off.
+      for (const change of expected.changes.filter(x=>x.section==="policies"&&x.desired)) {
+        const policy=change.desired;
+        const {rows:[state]}=await client.query(
+          "SELECT c.relrowsecurity AS rls FROM pg_catalog.pg_class c "+
+          "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "+
+          "WHERE n.nspname=$1 AND c.relname=$2",
+          [policy.schema,policy.tablename]);
+        if(!state?.rls)throw Error("Migration "+version+" policy relation has RLS disabled: "+policy.schema+"."+policy.tablename);
+      }
       const expectedStructure=expected.structure.map(structuralScope).sort();
       const observedStructure=observed.structure.map(structuralScope).sort();
       if(JSON.stringify(expectedStructure)!==JSON.stringify(observedStructure))
