@@ -31,3 +31,17 @@ test("no inferred approval for unsafe input",()=>{
  assert.throws(()=>run(["relation:chain.market","relation:chain.market"]),/Duplicate/);
  assert.throws(()=>buildPreDraftContext({project:"chat",snapshot,profile,targets:["relation:chain.market"]}),/project profile/);
 });
+
+test("full Kit schema snapshot provides columns, indexes, trigger, and constraint evidence",()=>{
+  const full={...snapshot,schema:{tables:[{schema_name:"chain",name:"market",kind:"r"}],
+    columns:[{schema_name:"chain",table_name:"market",name:"lease_token",type:"uuid"}],
+    constraints:[{schema_name:"chain",table_name:"market",name:"market_check",definition:"CHECK (true)"}],
+    indexes:[{schema_name:"chain",table_name:"market",name:"market_idx",definition:"CREATE INDEX ..."}],
+    triggers:[{schema_name:"chain",table_name:"market",name:"trg",definition:"CREATE TRIGGER ..."}],
+    functions:[]}};
+  const r=buildPreDraftContext({project:"indexer",snapshot:full,profile,targets:["relation:chain.market"]});
+  assert.equal(r.objects[0].structuralCatalog.columns[0].name,"lease_token");
+  assert.equal(r.objects[0].structuralCatalog.indexes.length,1);
+  assert.equal(r.objects[0].structuralCatalog.triggers.length,1);
+  assert.ok(!r.issues.some(x=>x.code==="SCHEMA_DEFINITIONS_MISSING"));
+});

@@ -41,9 +41,22 @@ export function buildPreDraftContext({project,snapshot,profile,targets,ownerPoli
     if(obj&&owner!==profile.migrationRole)issue("review","OWNER_MISMATCH",label,"Owner differs from migration role; verify actual SET/ADMIN/INHERIT or scoped Kit recipe");
     if(obj?.security_definer&&!(obj.configuration??[]).some(x=>String(x).startsWith("search_path=")))
       issue("review","DEFINER_PATH_MISSING",label,"SECURITY DEFINER lacks recorded fixed search_path");
+    // Reuse the existing Kit readSchemaCatalogOnClient snapshot. Never
+    // infer missing columns or indexes from a permissions-only target.
+    const structure=snapshot.schema;
+    const related=key=>Array.isArray(structure?.[key])?structure[key].filter(x=>
+      x.schema_name===t.schema && (t.kind==="relation" ? x.table_name===t.name : x.name===t.name)) : [];
+    const definition=t.kind==="relation" ? {
+      columns:related("columns"),
+      constraints:related("constraints"),
+      indexes:related("indexes"),
+      triggers:related("triggers"),
+      table:structure?.tables?.find(x=>x.schema_name===t.schema&&x.name===t.name)??null,
+    } : {overloads:related("functions")};
     objects.push({target:label,matched:matches.length,profileCoversSchema:covered,
       availableSignatures:t.kind==="function"?all.map(x=>x.arguments):[],
       schemaOwner:schema?.owner??null,schemaAcl:schema?.acl??null,
+      structuralCatalog:structure?definition:null,
       recordedObject:obj?{owner,arguments:obj.arguments??null,kind:obj.kind??"function",
         acl:obj.acl??null,rls:obj.rls??null,forceRls:obj.force_rls??null,
         securityDefiner:obj.security_definer??null,configuration:obj.configuration??null}:null,
