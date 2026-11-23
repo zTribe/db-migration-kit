@@ -18,7 +18,7 @@ export function buildPreDraftContext({project,snapshot,profile,targets,ownerPoli
     !profile.roles.some(r=>r.rolname===profile.migrationRole&&r.rolsuper===false))throw Error("Realistic non-superuser project profile required");
   if(!Array.isArray(targets)||!targets.length)throw Error("At least one target is required");
   if(!["expected-target","provided-snapshot"].includes(snapshotSource))throw Error("Unknown snapshot source");
-  if(!["create","modify"].includes(operation))throw Error("Unknown DDL operation");
+  if(!["create","modify","policy-create"].includes(operation))throw Error("Unknown DDL operation");
   if(!Number.isSafeInteger(historyAfterBaseline)||historyAfterBaseline<0)throw Error("Invalid history offset");
   // Do not accept a partial supplied JSON as a complete structure catalog.
   const structure=snapshot.schema==null?null:normalizeSchemaCatalog(snapshot.schema);
@@ -38,9 +38,23 @@ export function buildPreDraftContext({project,snapshot,profile,targets,ownerPoli
     const matches=t.kind==="function"&&t.args!==null?all.filter(x=>argsKey(x.arguments)===argsKey(t.args)):all;
     const obj=matches.length===1?matches[0]:null;
     const owner=obj?.owner??null;
+    // Supabase supautils delegates CREATE POLICY on realtime.messages to
+    // postgres without relation ownership. Restrict this exception to a
+    // real provided snapshot; it never authorizes ALTER TABLE or deployment.
+    const managedPolicy=operation==="policy-create"&&project==="chat"&&
+      t.kind==="relation"&&t.schema==="realtime"&&t.name==="messages"&&
+      snapshotSource==="provided-snapshot"&&profile.migrationRole==="postgres"&&
+      owner==="supabase_realtime_admin"&&matches.length===1;
     const member=owner?profile.memberships.find(x=>x.member===profile.migrationRole&&x.parent===owner):null;
     if(!schema)issue("block","SCHEMA_UNKNOWN",label,"Schema missing in supplied catalog");
-    if(!covered)issue("block","PROFILE_SCHEMA_UNCOVERED",label,"Recorded Production profile does not cover schema");
+    if(!covered&&!managedPolicy)
+      issue("block","PROFILE_SCHEMA_UNCOVERED",label,"Recorded Production profile does not cover schema");
+    if(managedPolicy)
+      issue("review","SUPABASE_POLICY_DELEGATION_REQUIRES_TARGET_PROBE",label,
+        "Supabase supautils may delegate CREATE POLICY on realtime.messages to postgres; do not infer it from Owner/SET. Kit's transactional policy probe and effective RLS tests are mandatory");
+    if(operation==="policy-create"&&!managedPolicy)
+      issue("block","UNSUPPORTED_PROVIDER_POLICY_OPERATION",label,
+        "Only a provided-snapshot Chat realtime.messages CREATE POLICY may use this advisory mode");
     if(!matches.length&&operation!=="create")issue("block","OBJECT_UNKNOWN",label,"Object not found; verify creation intent or stale catalog");
     if(matches.length&&operation==="create")issue("block","OBJECT_ALREADY_EXISTS",label,"Object already exists in catalog; choose modify instead of create");
     if(!matches.length&&operation==="create")issue("review","NEW_OBJECT_UNVERIFIED",label,"New object is not in recorded catalog; verify schema CREATE privilege and name collisions");
@@ -66,7 +80,7 @@ export function buildPreDraftContext({project,snapshot,profile,targets,ownerPoli
       triggers:related("triggers"),
       table:structure?.tables?.find(x=>x.schema_name===t.schema&&x.name===t.name)??null,
     } : {overloads:related("functions")};
-    objects.push({target:label,operation,matched:matches.length,profileCoversSchema:covered,
+    objects.push({target:label,operation,managedProviderPolicyDelegation:managedPolicy,matched:matches.length,profileCoversSchema:covered,
       ownerCapabilityAfterHistoricalReplay:"UNKNOWN_UNTIL_CHECKPOINT_REPLAY",
       availableSignatures:t.kind==="function"?all.map(x=>x.arguments):[],
       schemaOwner:schema?.owner??null,schemaAcl:schema?.acl??null,

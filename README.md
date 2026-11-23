@@ -236,3 +236,17 @@ The recorded permission profile is a **versioned historical checkpoint**, not a 
 ### v2 SQL Editor export in pre-draft CLI
 
 Use a Kit-compatible **single-row** SQL Editor CSV export with column `complete_snapshot`; pass it to `db-migrate-kit pre-draft --snapshot=chat-prod.csv --snapshot-source=provided-snapshot --target=relation:app.messages`. The v2 exporter includes the unchanged `postgres_version`, `roles`, `memberships`, `schemas`, `relations`, `column_acls`, `functions`, `policies`, `default_acls`, `extensions`, `database_acl`, `migration_ledger` fields expected by `parseLiveEnvironmentSnapshot`, plus an eight-section `structural_catalog`. Only v2 exports with all requested schemas present become pre-draft target state. The recorded Production permission checkpoint can predate the current ledger; a Dev migration suffix ahead of Production is `upgrade_pending` (review), while checksum disagreements and divergent historical ledgers remain blockers. Exported function definitions may contain embedded credentials: inspect before sharing.
+
+### Supabase managed Realtime policy pre-draft
+
+`--operation=policy-create` is a **narrow advisory** mode for Chat `relation:realtime.messages`
+with a complete `--snapshot-source=provided-snapshot` SQL Editor export showing
+`supabase_realtime_admin` as Owner and the recorded migration role `postgres`.
+It avoids a false `PROFILE_SCHEMA_UNCOVERED` hard block solely because the
+reusable business permission profile covers `app` rather than Supabase's managed
+`realtime` schema. **No other schema, table, role, or operation receives the
+exception.** It cannot assert Supabase's provider-level `supautils` delegation:
+the Kit's transactional `CREATE POLICY` probe on the real executing role,
+the immutable migration ledger and effective RLS behavior remain mandatory.
+`ALTER TABLE realtime.messages` is never permitted by this special mode.
+See https://supabase.com/kb/troubleshooting/realtime-must-be-owner-of-table-messages .

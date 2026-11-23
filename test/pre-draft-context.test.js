@@ -84,3 +84,32 @@ test("reusable historical permission checkpoint produces sequential replay plan,
  assert.equal(result.objects[0].ownerCapabilityAfterHistoricalReplay,"UNKNOWN_UNTIL_CHECKPOINT_REPLAY");
  assert.throws(()=>run(["relation:chain.market"],{historyAfterBaseline:-1}),/Invalid history offset/);
 });
+
+test("Supabase policy-create is advisory only for recorded realtime.messages with a full provided catalog",()=>{
+ const chatProfile={...profile,project:"chat",schemas:["app"],roles:[{rolname:"postgres",rolsuper:false}]};
+ const managed={...snapshot,permissions:{
+   ...snapshot.permissions,
+   schemas:[{schema:"realtime",owner:"supabase_admin",acl:null}],
+   objects:[{schema:"realtime",name:"messages",kind:"p",owner:"supabase_realtime_admin",rls:true,acl:"{}"}],
+   functions:[],
+   policies:[]
+ },schema:{
+   tables:[{schema_name:"realtime",name:"messages",kind:"p",rls:true}],
+   columns:[],constraints:[],indexes:[],triggers:[],functions:[],policies:[],publications:[]
+ }};
+ const r=buildPreDraftContext({project:"chat",snapshot:managed,profile:chatProfile,
+   targets:["relation:realtime.messages"],operation:"policy-create",snapshotSource:"provided-snapshot"});
+ assert.equal(r.blocked,false);
+ assert.equal(r.releaseApproved,false);
+ assert.equal(r.objects[0].managedProviderPolicyDelegation,true);
+ assert.ok(r.issues.some(x=>x.code==="SUPABASE_POLICY_DELEGATION_REQUIRES_TARGET_PROBE"));
+ assert.ok(!r.issues.some(x=>x.code==="PROFILE_SCHEMA_UNCOVERED"));
+ assert.equal(buildPreDraftContext({project:"chat",snapshot:managed,profile:chatProfile,
+   targets:["relation:realtime.messages"],operation:"modify",snapshotSource:"provided-snapshot"}).blocked,true);
+ const wrong={...managed,permissions:{...managed.permissions,objects:[
+   {...managed.permissions.objects[0],owner:"postgres"}]}};
+ assert.equal(buildPreDraftContext({project:"chat",snapshot:wrong,profile:chatProfile,
+   targets:["relation:realtime.messages"],operation:"policy-create",snapshotSource:"provided-snapshot"}).blocked,true);
+ assert.equal(buildPreDraftContext({project:"chat",snapshot:managed,profile:chatProfile,
+   targets:["relation:realtime.messages"],operation:"policy-create",snapshotSource:"expected-target"}).blocked,true);
+});
