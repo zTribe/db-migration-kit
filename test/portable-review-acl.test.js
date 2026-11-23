@@ -20,8 +20,8 @@ reviewedChange.desired.owner = "postgres";
 const reviewed = { changes:[reviewedChange], structure:[] };
 const observed = { changes:[change(runtimeBase, runtimeBase.slice(0,-1)+","+added+"}")], structure:[] };
 
-test("portable guard accepts a verified historical owner/migrator overlap",()=>{
-  assert.equal(portableReviewDeltaMatches(reviewed,observed,"postgres"),true);
+test("legacy strict guard conservatively rejects historical owner/migrator alias collision",()=>{
+  assert.equal(portableReviewDeltaMatches(reviewed,observed,"postgres"),false);
 });
 test("portable guard rejects missing, extra or revoked privileges",()=>{
   const before=runtimeBase;
@@ -84,12 +84,12 @@ test("portable precondition verifies affected function's complete before-state",
   assert.equal(portablePreconditionMatches(expected,state([row,row]),[changeRef],"postgres"),false);
 });
 
-test("portable precondition allows real migrator=historical owner, but rejects drift",()=>{
+test("legacy strict precondition rejects ambiguous historic role overlap and drift",()=>{
   const ref={section:"functions",identity:["app","jwt_wallet",""]};
   const state=functions=>({permissions:{functions}});
   assert.equal(portablePreconditionMatches(
     state([reviewed.changes[0].previous]),
-    state([observed.changes[0].previous]),[ref],"postgres"),true);
+    state([observed.changes[0].previous]),[ref],"postgres"),false);
   assert.equal(portablePreconditionMatches(
     state([reviewed.changes[0].previous]),
     state([{...observed.changes[0].previous,acl:runtimeBase.slice(0,-1)+",intruder=X/@migration-role}"}]),[ref],"postgres"),false);
