@@ -205,7 +205,7 @@ export function guardMigration(version, before, after, review) {
 // before snapshots or infer historic grantor/owner identity equivalence.
 // The SQL checksum and reviewed plan digest are independently verified by
 // loadMigrationConfig. Owner/capability checks remain in the shared Runner.
-function aclEntitlements(value) {
+function aclEntitlements(value, reviewRole = null) {
   if (value == null) return new Set();
   if (typeof value !== "string" || !/^\{[^{}"\\]*\}$/.test(value))
     throw Error("Contract review cannot parse ACL; strict manual review required");
@@ -220,15 +220,16 @@ function aclEntitlements(value) {
       if (!/[A-Za-z]/.test(privilege)) throw Error("Contract review rejects ACL privilege");
       const option=flags[i+1]==="*";
       if (option) i++;
-      const key=JSON.stringify([role,privilege,option]);
+      const recipient=reviewRole && role===MIGRATION_ROLE ? reviewRole : role;
+      const key=JSON.stringify([recipient,privilege,option]);
       if(result.has(key)) throw Error("Contract review rejects ambiguous ACL grants");
       result.add(key);
     }
   }
   return result;
 }
-function entitlementDelta(previous,desired) {
-  const from=aclEntitlements(previous),to=aclEntitlements(desired);
+function entitlementDelta(previous,desired,reviewRole=null) {
+  const from=aclEntitlements(previous,reviewRole),to=aclEntitlements(desired,reviewRole);
   return {
     added:[...to].filter(x=>!from.has(x)).sort(),
     removed:[...from].filter(x=>!to.has(x)).sort()
@@ -240,7 +241,7 @@ function reviewedScope(change) {
 function structuralScope(change) {
   return JSON.stringify([change.section,change.key,change.code]);
 }
-function contractChangeMatches(reviewed,observed,actualRole) {
+export function contractChangeMatches(reviewed,observed,actualRole) {
   if (!reviewed || !observed || reviewedScope(reviewed)!==reviewedScope(observed))
     return false;
   const expected=reviewed.desired,actual=observed.desired;
@@ -249,10 +250,17 @@ function contractChangeMatches(reviewed,observed,actualRole) {
   // Validate final runtime security properties, not historical ACL grantors.
   const {acl:expectedAcl,owner:expectedOwner,...otherExpected}=expected;
   const {acl:actualAcl,owner:actualOwner,...otherActual}=actual;
-  if(JSON.stringify(otherExpected)!==JSON.stringify(otherActual)) return false;
+  // Only the literal reviewed migration-role placeholder is substituted;
+  // historical postgres, other owners and ACL grantors are never inferred.
+  const replacePlaceholder=value=>Array.isArray(value)
+    ? value.map(replacePlaceholder)
+    : value && typeof value==="object"
+      ? Object.fromEntries(Object.entries(value).map(([k,v])=>[k,replacePlaceholder(v)]))
+      : value===MIGRATION_ROLE ? actualRole : value;
+  if(JSON.stringify(replacePlaceholder(otherExpected))!==JSON.stringify(otherActual)) return false;
   if (expectedOwner !== MIGRATION_ROLE && expectedOwner !== actualOwner) return false;
   if (expectedOwner === MIGRATION_ROLE && actualOwner !== actualRole) return false;
-  const expectedDelta=entitlementDelta(reviewed.previous?.acl,expectedAcl);
+  const expectedDelta=entitlementDelta(reviewed.previous?.acl,expectedAcl,actualRole);
   const actualDelta=entitlementDelta(observed.previous?.acl,actualAcl);
   return JSON.stringify(expectedDelta)===JSON.stringify(actualDelta);
 }
