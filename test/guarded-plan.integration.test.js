@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import pg from "pg";
-import { applyMigrations, guardMigration, loadMigrationConfig, planMigration, readTargetState } from "../src/index.js";
+import { applyMigrations, guardMigration, contractMigration, loadMigrationConfig, planMigration, readTargetState } from "../src/index.js";
 
 test("config → generated migration → rollback on unauthorized privilege → verified commit", {
   skip: !process.env.PG_TEST_URL,
@@ -147,5 +147,48 @@ test("PG17 portable guard verifies reviewed ACL before, after, and rollback", {
   } finally {
     try { await client.query("ROLLBACK"); }
     finally { await client.end(); }
+  }
+});
+
+
+test("PG17 Kit Lite contract checks actual grants, RLS and rollback without historical ACL precondition matching",{
+  skip: !process.env.PG_TEST_URL,
+},async()=>{
+  const {normalizeMigrationRole}=await import("../src/migration-role.js");
+  const client=new pg.Client({connectionString:process.env.PG_TEST_URL});
+  await client.connect();
+  const schema="kit_lite_contract_probe";
+  try {
+    await client.query("BEGIN");
+    await client.query("CREATE SCHEMA "+schema);
+    await client.query("CREATE FUNCTION "+schema+".probe() RETURNS integer LANGUAGE sql "+
+      "SECURITY INVOKER SET search_path=pg_catalog AS 'SELECT 1'");
+    await client.query("REVOKE EXECUTE ON FUNCTION "+schema+".probe() FROM PUBLIC");
+    const {rows:[identity]}=await client.query("SELECT current_user AS role");
+    const capture=async()=>normalizeMigrationRole(await readTargetState(client,[schema]),identity.role);
+    const before=await capture();
+    await client.query("SAVEPOINT grant_review");
+    await client.query("GRANT EXECUTE ON FUNCTION "+schema+".probe() TO pg_monitor");
+    const after=await capture();
+    await client.query("ROLLBACK TO SAVEPOINT grant_review");
+    const plan=planMigration(before,after);
+    const guard=contractMigration("kit_lite_acl",before,after,
+      {digest:plan.digest,reason:"Review exact added pg_monitor grant"});
+    await guard.before(client);
+    await client.query("GRANT EXECUTE ON FUNCTION "+schema+".probe() TO pg_monitor");
+    await guard.after(client);
+    await client.query("ROLLBACK TO SAVEPOINT grant_review");
+    await guard.before(client);
+    await client.query("GRANT EXECUTE ON FUNCTION "+schema+".probe() TO pg_monitor");
+    await client.query("GRANT EXECUTE ON FUNCTION "+schema+".probe() TO pg_signal_backend");
+    await assert.rejects(guard.after(client),/unexpected catalog objects|unexpected grants/);
+    await client.query("ROLLBACK TO SAVEPOINT grant_review");
+    await guard.before(client);
+    await client.query("GRANT EXECUTE ON FUNCTION "+schema+".probe() TO PUBLIC");
+    await assert.rejects(guard.after(client),/unexpected grants|unexpected catalog objects/);
+    await client.query("ROLLBACK TO SAVEPOINT grant_review");
+    assert.deepEqual(planMigration(await capture(),before).changes,[]);
+  } finally {
+    try { await client.query("ROLLBACK"); } finally { await client.end(); }
   }
 });
