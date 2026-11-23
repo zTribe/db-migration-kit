@@ -32,3 +32,5 @@ export { deriveProductionPermissionProfile, projectPermissionCatalog, comparePro
  assertProductionPermissionProfile, verifyProductionPermissionFixture, renderDisposableRoleSetup } from "./production-permission-profile.js";
 
 export { renderDisposableAclSetup } from "./production-permission-profile.js";
+
+export { buildPreDraftContext, parsePreDraftTarget } from "./pre-draft-context.js";
