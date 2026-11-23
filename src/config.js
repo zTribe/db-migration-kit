@@ -1,6 +1,6 @@
 import { assertManagedTransaction } from "./transaction-sql.js";
 import { generateMigrationSql } from "./migration-plan.js";
-import { guardMigration } from "./guarded-plan.js";
+import { guardMigration, contractMigration } from "./guarded-plan.js";
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { loadManifest } from "./checksum.js";
@@ -33,6 +33,12 @@ export async function loadMigrationConfig(path) {
       config.serviceOnlyFunctions.some(signature => typeof signature !== "string" || !signature.trim()))) {
     throw new Error("Invalid serviceOnlyFunctions configuration");
   }
+  if (config.reviewMode !== undefined && !["strict","contract"].includes(config.reviewMode))
+    throw Error("Unknown migration reviewMode");
+  if (config.reviewMode === "contract" && !config.historicalManifest)
+    throw Error("Contract review requires immutable historicalManifest and reviewed SQL sidecars");
+  if (config.reviewMode === "contract" && config.guard !== undefined)
+    throw Error("Contract review cannot mix legacy single-migration strict guard");
   const manifest = await loadManifest(config);
   if (config.capabilityRelationPreflightAfter !== undefined) {
     const boundary = config.capabilityRelationPreflightAfter;
@@ -70,7 +76,7 @@ export async function loadMigrationConfig(path) {
           throw new Error(`Migration review must cover database and default privileges: ${migration.version}`);
         }
       }
-      const guard = guardMigration(migration.version, before, after, review);
+      const guard = (config.reviewMode === "contract" ? contractMigration : guardMigration)(migration.version, before, after, review);
       config.migrationGuards.set(migration.version, {
         ...guard,
         async before(client, entry) {
