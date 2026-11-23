@@ -74,9 +74,13 @@ test("contradictory schema and permission catalogs are rejected",()=>{
  assert.equal(result.blocked,true);
  assert.ok(result.issues.some(x=>x.code==="CATALOG_DISAGREEMENT"));
 });
-test("historical permission profile behind branch HEAD is not silently treated as current",()=>{
- const result=run(["relation:chain.market"],{historyAfterBaseline:1});
- assert.equal(result.historyAfterBaseline,1);
- assert.ok(result.issues.some(x=>x.code==="PERMISSION_BASELINE_BEHIND_HEAD"));
+test("reusable historical permission checkpoint produces sequential replay plan, not stale warning",()=>{
+ const result=run(["relation:chain.market"],{historyAfterBaseline:37});
+ assert.equal(result.replayPlan.permissionCheckpointVersion,"066_archive_rpc_usage_hourly");
+ assert.equal(result.replayPlan.migrationsFollowingCheckpoint,37);
+ assert.equal(result.replayPlan.reusableCheckpoint,true);
+ assert.equal(result.replayPlan.verification,"NOT_RUN_ADVISORY_ONLY");
+ assert.deepEqual(result.issues.filter(x=>x.code==="PERMISSION_BASELINE_BEHIND_HEAD"),[]);
+ assert.equal(result.objects[0].ownerCapabilityAfterHistoricalReplay,"UNKNOWN_UNTIL_CHECKPOINT_REPLAY");
  assert.throws(()=>run(["relation:chain.market"],{historyAfterBaseline:-1}),/Invalid history offset/);
 });

@@ -52,7 +52,7 @@ export function buildPreDraftContext({project,snapshot,profile,targets,ownerPoli
       if(inStructure!==(matches.length>0))
         issue("block","CATALOG_DISAGREEMENT",label,"Structure and permissions catalogs disagree on target existence");
     }
-    if(obj&&owner!==profile.migrationRole)issue("review","OWNER_MISMATCH",label,"Owner differs from migration role; verify actual SET/ADMIN/INHERIT or scoped Kit recipe");
+    if(obj&&owner!==profile.migrationRole)issue("review","OWNER_MISMATCH",label,"Recorded owner differs from migration role; verify Owner/ACL after replaying later historical migrations, then check actual SET/ADMIN/INHERIT or scoped Kit recipe");
     if(obj?.security_definer&&!(obj.configuration??[]).some(x=>String(x).startsWith("search_path=")))
       issue("review","DEFINER_PATH_MISSING",label,"SECURITY DEFINER lacks recorded fixed search_path");
     // Reuse the existing Kit readSchemaCatalogOnClient snapshot. Never
@@ -67,6 +67,7 @@ export function buildPreDraftContext({project,snapshot,profile,targets,ownerPoli
       table:structure?.tables?.find(x=>x.schema_name===t.schema&&x.name===t.name)??null,
     } : {overloads:related("functions")};
     objects.push({target:label,operation,matched:matches.length,profileCoversSchema:covered,
+      ownerCapabilityAfterHistoricalReplay:"UNKNOWN_UNTIL_CHECKPOINT_REPLAY",
       availableSignatures:t.kind==="function"?all.map(x=>x.arguments):[],
       schemaOwner:schema?.owner??null,schemaAcl:schema?.acl??null,
       structuralCatalog:structure?definition:null,
@@ -87,11 +88,25 @@ export function buildPreDraftContext({project,snapshot,profile,targets,ownerPoli
   issue("review","LIVE_LEDGER_UNVERIFIED","project","Check actual Dev/Prod ledger, checksum and database identity read-only");
   issue("review","TARGET_ROLE_UNVERIFIED","project","Check actual migration login DDL capabilities and real PG17 replay");
   if(structure===null)issue(snapshotSource==="provided-snapshot"?"block":"review","SCHEMA_DEFINITIONS_MISSING","project","Permission-only snapshot lacks columns/indexes/constraints");
-  if(historyAfterBaseline>0)issue("review","PERMISSION_BASELINE_BEHIND_HEAD","project",
-    historyAfterBaseline+" historical migration(s) follow the recorded permission-profile baseline; recheck Owner/ACL changes");
+  // A reusable permission checkpoint intentionally predates future SQL.
+  // The later historical migrations change the simulated permissions normally.
+  // They are not a reason to re-capture the snapshot at each new migration.
+  const replayPlan={
+    permissionCheckpointVersion:profile.baseline?.version??null,
+    permissionCheckpointCount:profile.baseline?.count??null,
+    migrationsFollowingCheckpoint:historyAfterBaseline,
+    reusableCheckpoint:true,
+    steps:[
+      "replay historical SQL up to the permission checkpoint",
+      "initialize recorded roles, grants, owners and RLS at that checkpoint",
+      "replay subsequent immutable historical migrations in version order",
+      "prepare pending candidate SQL in order and validate cumulative privileges"
+    ],
+    verification:"NOT_RUN_ADVISORY_ONLY"
+  };
   if(snapshotSource==="expected-target")issue("review","EXPECTED_NOT_LIVE","project","migration-target.json is expected catalog, not live database proof");
   return {kind:"KIT_AI_PRE_DRAFT_CONTEXT",approved:false,releaseApproved:false,project,migrationName,
-    snapshotSource,operation,historyAfterBaseline,recordedMigrationRole:profile.migrationRole,permissionBaseline:profile.baseline??null,
+    snapshotSource,operation,historyAfterBaseline,replayPlan,recordedMigrationRole:profile.migrationRole,permissionBaseline:profile.baseline??null,
     baselineChecked,blocked:issues.some(x=>x.severity==="block"),objects,issues,
     provenance:{snapshotSha256:digest(snapshot),profileSha256:digest(profile)},
     next:"Review unknowns and application consumers before SQL; afterwards Kit draft-check and disposable PG17 prepare are mandatory."};
