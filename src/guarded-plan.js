@@ -316,12 +316,21 @@ export function contractMigration(version,before,after,review) {
         const signature=schema+"."+name+"("+args+")";
         const reviewedAccess=aclEntitlements(change.desired.acl,identity.role);
         const explicitlyPublic=[...reviewedAccess].some(x=>JSON.parse(x)[0]==="" && JSON.parse(x)[1]==="X");
-        const {rows:[access]}=await client.query(
-          "SELECT coalesce((SELECT EXISTS (SELECT 1 FROM pg_catalog.aclexplode("+
+        // pg_get_function_identity_arguments includes parameter NAMES such as
+        // "p_room_id text". to_regprocedure accepts TYPE names only and would
+        // throw SQLSTATE 42601 near "text". Match the exact catalog identity
+        // rather than attempting to parse/reconstruct a regprocedure string.
+        const {rows:matches}=await client.query(
+          "SELECT EXISTS (SELECT 1 FROM pg_catalog.aclexplode("+
           "coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) g "+
-          "WHERE g.grantee=0 AND g.privilege_type='EXECUTE') "+
-          "FROM pg_catalog.pg_proc p WHERE p.oid=pg_catalog.to_regprocedure($1)),true) AS public_execute",
-          [signature]);
+          "WHERE g.grantee=0 AND g.privilege_type='EXECUTE') AS public_execute "+
+          "FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace "+
+          "WHERE n.nspname=$1 AND p.proname=$2 "+
+          "AND pg_catalog.pg_get_function_identity_arguments(p.oid)=$3",
+          [schema,name,args]);
+        if(matches.length!==1)
+          throw Error("Migration "+version+" cannot identify reviewed function: "+signature);
+        const access=matches[0];
         if(access?.public_execute && !explicitlyPublic)
           throw Error("Migration "+version+" exposed unreviewed PUBLIC EXECUTE: "+signature);
       }
