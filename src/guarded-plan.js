@@ -44,8 +44,65 @@ function canonicalFunctionAcl(value, actualRole, owner) {
   return [...grants].sort(([a], [b]) => a.localeCompare(b));
 }
 
+// Reject collisions between a reviewed historical role and the portable
+// migrator alias. A name collision cannot prove those distinct identities
+// have the same Owner or GRANT provenance in the target environment.
+function hasAmbiguousMigratorAlias(row, actualRole) {
+  if (typeof actualRole !== "string" || !actualRole || actualRole === MIGRATION_ROLE) return true;
+  if (typeof row?.acl !== "string") return false;
+  const items=row.acl.slice(1,-1).split(",").filter(Boolean);
+  const hasRole=name=>items.some(item=>{
+    const parts=item.split("/");
+    const grantee=parts[0]?.split("=")[0];
+    return grantee===name || parts[1]===name;
+  });
+  return hasRole(actualRole) && hasRole(MIGRATION_ROLE);
+}
+
+function portableReviewedObjectMatches(expected, actual, role, section) {
+  if (JSON.stringify(expected)===JSON.stringify(actual)) return true;
+  if (section!=="functions" || !expected || !actual ||
+      hasAmbiguousMigratorAlias(expected,role)) return false;
+  const omitAcl=({acl,...rest})=>({
+    ...rest,owner:rest.owner===role?MIGRATION_ROLE:rest.owner
+  });
+  if(JSON.stringify(omitAcl(expected))!==JSON.stringify(omitAcl(actual)))return false;
+  const beforeAcl=canonicalFunctionAcl(expected.acl,role,MIGRATION_ROLE);
+  const actualAcl=canonicalFunctionAcl(actual.acl,role,MIGRATION_ROLE);
+  return Boolean(beforeAcl&&actualAcl&&JSON.stringify(beforeAcl)===JSON.stringify(actualAcl));
+}
+
+// A delta-only check misses privileges already present before the upgrade.
+// Verify the reviewed precondition of each changed object before applying SQL.
+export function portablePreconditionMatches(reviewed, actual, changes, role) {
+  const keys={
+    schemas:["schema"],objects:["schema","name"],
+    columnPrivileges:["schema","relation","column_name"],
+    functions:["schema","name","arguments"],
+    policies:["schema","tablename","policyname"],
+    roles:["rolname"],memberships:["member","parent"],
+    databasePrivileges:["scope"],defaultPrivileges:["owner","schema","kind"]
+  };
+  for(const change of changes){
+    const fields=keys[change.section];
+    if(!fields)return false;
+    const find=(state)=>{
+      const rows=state.permissions[change.section]??[];
+      const matches=rows.filter(row=>JSON.stringify(fields.map(k=>row[k]))===JSON.stringify(change.identity));
+      return matches.length===1?matches[0]:matches.length===0?null:undefined;
+    };
+    const expected=find(reviewed),observed=find(actual);
+    if(expected===undefined || observed===undefined ||
+       !portableReviewedObjectMatches(expected,observed,role,change.section))
+      return false;
+  }
+  return true;
+}
+
 function portableChangeMatches(expected, observed, actualRole) {
   if (JSON.stringify(expected) === JSON.stringify(observed)) return true;
+  if (hasAmbiguousMigratorAlias(expected?.previous,actualRole) ||
+      hasAmbiguousMigratorAlias(expected?.desired,actualRole)) return false;
   if (expected?.section !== "functions" || observed?.section !== "functions" ||
       !expected.previous || !expected.desired || !observed.previous || !observed.desired ||
       JSON.stringify(expected.identity) !== JSON.stringify(observed.identity) ||
@@ -106,8 +163,12 @@ export function guardMigration(version, before, after, review) {
     version,
     async before(client) {
       const actual = await capture(client, before);
-      if (portable) initialStates.set(client, actual);
-      else {
+      if (portable) {
+        const {rows:[identity]}=await client.query("SELECT current_user AS role");
+        if(!portablePreconditionMatches(before,actual,plan.changes,identity.role))
+          fail("precondition",planMigration(actual,before));
+        initialStates.set(client,actual);
+      } else {
         const diff = planMigration(actual, before);
         if (diff.changes.length || diff.structure.length) fail("precondition", diff);
       }
