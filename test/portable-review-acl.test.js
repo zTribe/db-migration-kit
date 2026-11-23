@@ -20,8 +20,8 @@ reviewedChange.desired.owner = "postgres";
 const reviewed = { changes:[reviewedChange], structure:[] };
 const observed = { changes:[change(runtimeBase, runtimeBase.slice(0,-1)+","+added+"}")], structure:[] };
 
-test("portable guard rejects ambiguous historical postgres and migrator alias collision",()=>{
-  assert.equal(portableReviewDeltaMatches(reviewed,observed,"postgres"),false);
+test("portable guard accepts a verified historical owner/migrator overlap",()=>{
+  assert.equal(portableReviewDeltaMatches(reviewed,observed,"postgres"),true);
 });
 test("portable guard rejects missing, extra or revoked privileges",()=>{
   const before=runtimeBase;
@@ -84,11 +84,17 @@ test("portable precondition verifies affected function's complete before-state",
   assert.equal(portablePreconditionMatches(expected,state([row,row]),[changeRef],"postgres"),false);
 });
 
-test("portable precondition rejects ambiguous source alias rather than silently merging principals",()=>{
+test("portable precondition allows real migrator=historical owner, but rejects drift",()=>{
   const ref={section:"functions",identity:["app","jwt_wallet",""]};
   const state=functions=>({permissions:{functions}});
   assert.equal(portablePreconditionMatches(
     state([reviewed.changes[0].previous]),
+    state([observed.changes[0].previous]),[ref],"postgres"),true);
+  assert.equal(portablePreconditionMatches(
+    state([reviewed.changes[0].previous]),
+    state([{...observed.changes[0].previous,acl:runtimeBase.slice(0,-1)+",intruder=X/@migration-role}"}]),[ref],"postgres"),false);
+  assert.equal(portablePreconditionMatches(
+    state([{...reviewed.changes[0].previous,owner:"other_owner"}]),
     state([observed.changes[0].previous]),[ref],"postgres"),false);
 });
 
@@ -97,4 +103,13 @@ test("portable guard still accepts a one-to-one portable migration identity",()=
   const after=before.slice(0,-1)+","+added+"}";
   const same={changes:[change(before,after)],structure:[]};
   assert.equal(portableReviewDeltaMatches(same,same,"postgres"),true);
+});
+
+test("portable guard refuses alias collision when migrator is not historical function owner",()=>{
+  const other={changes:[{
+    ...reviewed.changes[0],
+    previous:{...reviewed.changes[0].previous,owner:"other_owner"},
+    desired:{...reviewed.changes[0].desired,owner:"other_owner"}
+  }],structure:[]};
+  assert.equal(portableReviewDeltaMatches(other,observed,"postgres"),false);
 });
