@@ -188,6 +188,18 @@ test("PG17 Kit Lite contract checks actual grants, RLS and rollback without hist
     await assert.rejects(guard.after(client),/unexpected grants|unexpected catalog objects/);
     await client.query("ROLLBACK TO SAVEPOINT grant_review");
     assert.deepEqual(planMigration(await capture(),before).changes,[]);
+    await client.query("SAVEPOINT unsafe_default");
+    const prior=await capture();
+    await client.query("CREATE FUNCTION "+schema+".unsafe_default() RETURNS integer LANGUAGE sql AS 'SELECT 1'");
+    const exposed=await capture();
+    await client.query("ROLLBACK TO SAVEPOINT unsafe_default");
+    const publicPlan=planMigration(prior,exposed);
+    const publicGuard=contractMigration("kit_lite_public_default",prior,exposed,
+      {digest:publicPlan.digest,reason:"Reject implicit PostgreSQL PUBLIC EXECUTE default"});
+    await publicGuard.before(client);
+    await client.query("CREATE FUNCTION "+schema+".unsafe_default() RETURNS integer LANGUAGE sql AS 'SELECT 1'");
+    await assert.rejects(publicGuard.after(client),/unreviewed PUBLIC EXECUTE/);
+    await client.query("ROLLBACK TO SAVEPOINT unsafe_default");
   } finally {
     try { await client.query("ROLLBACK"); } finally { await client.end(); }
   }
