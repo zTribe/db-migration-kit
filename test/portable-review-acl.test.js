@@ -24,7 +24,7 @@ test("portable guard rejects missing, extra or revoked privileges",()=>{
   const before=runtimeBase;
   assert.equal(portableReviewDeltaMatches(reviewed,{...observed,changes:[change(before,before)]},"postgres"),false);
   assert.equal(portableReviewDeltaMatches(reviewed,{...observed,changes:[
-    change(before,before.slice(0,-1)+","+added+",anon=X/@migration-role}")
+    change(before,before.slice(0,-1)+","+added+",unexpected_role=X/@migration-role}")
   ]},"postgres"),false);
   assert.equal(portableReviewDeltaMatches(reviewed,{...observed,changes:[
     change(before,before.replace("anon=X/@migration-role,","").slice(0,-1)+","+added+"}")
