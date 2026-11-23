@@ -109,3 +109,43 @@ test("review accepts an equivalent migration role under a different login name",
     finally { await client.end(); }
   }
 });
+
+test("PG17 portable guard verifies reviewed ACL before, after, and rollback", {
+  skip: !process.env.PG_TEST_URL,
+}, async () => {
+  const { normalizeMigrationRole } = await import("../src/migration-role.js");
+  const client = new pg.Client({ connectionString: process.env.PG_TEST_URL });
+  await client.connect();
+  const schema = "kit_portable_acl_probe";
+  try {
+    await client.query("BEGIN");
+    await client.query("CREATE SCHEMA " + schema);
+    await client.query("CREATE FUNCTION " + schema + ".probe() RETURNS integer LANGUAGE sql AS 'SELECT 1'");
+    await client.query("REVOKE EXECUTE ON FUNCTION " + schema + ".probe() FROM PUBLIC");
+    const {rows:[identity]}=await client.query("SELECT current_user AS role");
+    const capture=async()=>normalizeMigrationRole(await readTargetState(client,[schema]),identity.role);
+    const before=await capture();
+    await client.query("SAVEPOINT reviewed_acl");
+    await client.query("GRANT EXECUTE ON FUNCTION " + schema + ".probe() TO pg_monitor");
+    const after=await capture();
+    await client.query("ROLLBACK TO SAVEPOINT reviewed_acl");
+    const plan=planMigration(before,after);
+    assert.ok(plan.changes.some(change=>change.section==="functions"),
+      "Fixture must really change a function ACL");
+    const guard=guardMigration("reviewed_acl_probe",before,after,{
+      digest:plan.digest,reason:"Portable PostgreSQL ACL regression"
+    });
+    await guard.before(client);
+    await client.query("GRANT EXECUTE ON FUNCTION " + schema + ".probe() TO pg_monitor");
+    await guard.after(client);
+    await client.query("ROLLBACK TO SAVEPOINT reviewed_acl");
+    await client.query("GRANT EXECUTE ON FUNCTION " + schema + ".probe() TO pg_signal_backend");
+    await assert.rejects(guard.before(client),/precondition differs/,
+      "Pre-existing unreviewed privilege must reject the migration before DDL");
+    await client.query("ROLLBACK TO SAVEPOINT reviewed_acl");
+    assert.deepEqual(planMigration(await capture(),before).changes,[]);
+  } finally {
+    try { await client.query("ROLLBACK"); }
+    finally { await client.end(); }
+  }
+});
