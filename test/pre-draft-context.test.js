@@ -38,7 +38,7 @@ test("full Kit schema snapshot provides columns, indexes, trigger, and constrain
     constraints:[{schema_name:"chain",table_name:"market",name:"market_check",definition:"CHECK (true)"}],
     indexes:[{schema_name:"chain",table_name:"market",name:"market_idx",definition:"CREATE INDEX ..."}],
     triggers:[{schema_name:"chain",table_name:"market",name:"trg",definition:"CREATE TRIGGER ..."}],
-    functions:[]}};
+    functions:[],policies:[],publications:[]}};
   const r=buildPreDraftContext({project:"indexer",snapshot:full,profile,targets:["relation:chain.market"]});
   assert.equal(r.objects[0].structuralCatalog.columns[0].name,"lease_token");
   assert.equal(r.objects[0].structuralCatalog.indexes.length,1);
