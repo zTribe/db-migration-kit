@@ -198,3 +198,110 @@ export function guardMigration(version, before, after, review) {
     },
   };
 }
+
+
+// Kit Lite: compare the ACTUAL security changes made in one PostgreSQL
+// transaction against reviewed change *intent*. Never compare cross-environment
+// before snapshots or infer historic grantor/owner identity equivalence.
+// The SQL checksum and reviewed plan digest are independently verified by
+// loadMigrationConfig. Owner/capability checks remain in the shared Runner.
+function aclEntitlements(value) {
+  if (value == null) return new Set();
+  if (typeof value !== "string" || !/^\{[^{}"\\]*\}$/.test(value))
+    throw Error("Contract review cannot parse ACL; strict manual review required");
+  const result=new Set();
+  for (const entry of value.slice(1,-1).split(",").filter(Boolean)) {
+    const parsed=/^([^=,{}"\\]*)=([A-Za-z*]*)\/([^=,{}"\\]+)$/.exec(entry);
+    if (!parsed) throw Error("Contract review rejects unsupported ACL");
+    const [,role,flags]=parsed;
+    if (!flags || /^\*/.test(flags)) throw Error("Contract review rejects malformed ACL");
+    for (let i=0;i<flags.length;i++) {
+      const privilege=flags[i];
+      if (!/[A-Za-z]/.test(privilege)) throw Error("Contract review rejects ACL privilege");
+      const option=flags[i+1]==="*";
+      if (option) i++;
+      const key=JSON.stringify([role,privilege,option]);
+      if(result.has(key)) throw Error("Contract review rejects ambiguous ACL grants");
+      result.add(key);
+    }
+  }
+  return result;
+}
+function entitlementDelta(previous,desired) {
+  const from=aclEntitlements(previous),to=aclEntitlements(desired);
+  return {
+    added:[...to].filter(x=>!from.has(x)).sort(),
+    removed:[...from].filter(x=>!to.has(x)).sort()
+  };
+}
+function reviewedScope(change) {
+  return JSON.stringify([change.section,change.identity]);
+}
+function structuralScope(change) {
+  return JSON.stringify([change.section,change.key,change.code]);
+}
+function contractChangeMatches(reviewed,observed,actualRole) {
+  if (!reviewed || !observed || reviewedScope(reviewed)!==reviewedScope(observed))
+    return false;
+  const expected=reviewed.desired,actual=observed.desired;
+  if (Boolean(expected)!==Boolean(actual)) return false;
+  if (!expected) return true;
+  // Validate final runtime security properties, not historical ACL grantors.
+  const {acl:expectedAcl,owner:expectedOwner,...otherExpected}=expected;
+  const {acl:actualAcl,owner:actualOwner,...otherActual}=actual;
+  if(JSON.stringify(otherExpected)!==JSON.stringify(otherActual)) return false;
+  if (expectedOwner !== MIGRATION_ROLE && expectedOwner !== actualOwner) return false;
+  if (expectedOwner === MIGRATION_ROLE && actualOwner !== actualRole) return false;
+  const expectedDelta=entitlementDelta(reviewed.previous?.acl,expectedAcl);
+  const actualDelta=entitlementDelta(observed.previous?.acl,actualAcl);
+  return JSON.stringify(expectedDelta)===JSON.stringify(actualDelta);
+}
+
+/**
+ * One execution path for every migration: reviewed SQL/checksum, real owner
+ * capability preflight, transaction, and live catalog security-delta checks.
+ * No portable role alias or historic ACL grantor equivalence inference.
+ * Business-specific behavior, RLS authorization and owner assertions remain
+ * the responsibility of each project's real PG17 migration contracts.
+ */
+export function contractMigration(version,before,after,review) {
+  const expected=planMigration(before,after);
+  assertMigrationReview(expected,review);
+  if (before.migrationRole!==after.migrationRole) throw Error("Migration role coverage differs");
+  const schemas=before.permissions.schemas.map(x=>x.schema).sort();
+  if (!schemas.length ||
+      JSON.stringify(schemas)!==JSON.stringify(after.permissions.schemas.map(x=>x.schema).sort()))
+    throw Error("Contract requires stable nonempty schema coverage");
+  const started=new WeakMap();
+  return {
+    version,
+    async before(client) {
+      // The local state is the authority. Do not compare it to a disposable
+      // fixture's historical grantors, or merge two distinct principals.
+      const state=await readTargetState(client,schemas,before.schema!==null);
+      started.set(client,state);
+    },
+    async after(client) {
+      const initial=started.get(client);
+      started.delete(client);
+      if (!initial) throw Error("Contract is missing its transaction-local before state");
+      const actual=await readTargetState(client,schemas,after.schema!==null);
+      const observed=planMigration(initial,actual);
+      const expectedChanges=new Map(expected.changes.map(x=>[reviewedScope(x),x]));
+      const observedChanges=new Map(observed.changes.map(x=>[reviewedScope(x),x]));
+      // Unexpected privileges, owner changes, RLS toggles, policies and
+      // schema changes must NEVER silently pass just because SQL executed.
+      if (expectedChanges.size!==observedChanges.size ||
+          expected.structure.length!==observed.structure.length)
+        throw Error("Migration "+version+" contract changed unexpected catalog objects");
+      const {rows:[identity]}=await client.query("SELECT current_user AS role");
+      for (const [key,change] of expectedChanges)
+        if (!contractChangeMatches(change,observedChanges.get(key),identity.role))
+          throw Error("Migration "+version+" contract changed unexpected grants, owner or security properties: "+key);
+      const expectedStructure=expected.structure.map(structuralScope).sort();
+      const observedStructure=observed.structure.map(structuralScope).sort();
+      if(JSON.stringify(expectedStructure)!==JSON.stringify(observedStructure))
+        throw Error("Migration "+version+" contract structural change differs from review");
+    }
+  };
+}
