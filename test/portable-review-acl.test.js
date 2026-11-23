@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { portableReviewDeltaMatches } from "../src/guarded-plan.js";
+import { portableReviewDeltaMatches, portablePreconditionMatches } from "../src/guarded-plan.js";
 
 const reviewedBase = "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres,@migration-role=X*/postgres}";
 const runtimeBase = "{@migration-role=X/@migration-role,anon=X/@migration-role,authenticated=X/@migration-role,service_role=X/@migration-role}";
@@ -20,8 +20,8 @@ reviewedChange.desired.owner = "postgres";
 const reviewed = { changes:[reviewedChange], structure:[] };
 const observed = { changes:[change(runtimeBase, runtimeBase.slice(0,-1)+","+added+"}")], structure:[] };
 
-test("portable guard accepts identical new EXECUTE grant despite unchanged historical ACL grantor",()=>{
-  assert.equal(portableReviewDeltaMatches(reviewed,observed,"postgres"),true);
+test("portable guard rejects ambiguous historical postgres and migrator alias collision",()=>{
+  assert.equal(portableReviewDeltaMatches(reviewed,observed,"postgres"),false);
 });
 test("portable guard rejects missing, extra or revoked privileges",()=>{
   const before=runtimeBase;
@@ -70,4 +70,31 @@ test("portable guard rejects unrelated owner even when the ACL is otherwise iden
     desired:{...observed.changes[0].desired,owner:"other_owner"}
   });
   assert.equal(portableReviewDeltaMatches(reviewed,{changes:[wrong],structure:[]},"postgres"),false);
+});
+
+test("portable precondition verifies affected function's complete before-state",()=>{
+  const row={...observed.changes[0].previous};
+  const state=permissions=>({permissions:{functions:permissions}});
+  const changeRef={section:"functions",identity:["app","jwt_wallet",""]};
+  const expected=state([row]);
+  assert.equal(portablePreconditionMatches(expected,state([row]),[changeRef],"postgres"),true);
+  assert.equal(portablePreconditionMatches(expected,state([{...row,acl:row.acl.slice(0,-1)+",unauthorized=X/@migration-role}"}]),[changeRef],"postgres"),false);
+  assert.equal(portablePreconditionMatches(expected,state([{...row,owner:"different_owner"}]),[changeRef],"postgres"),false);
+  assert.equal(portablePreconditionMatches(expected,state([]),[changeRef],"postgres"),false);
+  assert.equal(portablePreconditionMatches(expected,state([row,row]),[changeRef],"postgres"),false);
+});
+
+test("portable precondition rejects ambiguous source alias rather than silently merging principals",()=>{
+  const ref={section:"functions",identity:["app","jwt_wallet",""]};
+  const state=functions=>({permissions:{functions}});
+  assert.equal(portablePreconditionMatches(
+    state([reviewed.changes[0].previous]),
+    state([observed.changes[0].previous]),[ref],"postgres"),false);
+});
+
+test("portable guard still accepts a one-to-one portable migration identity",()=>{
+  const before="{anon=X/@migration-role,@migration-role=X/@migration-role}";
+  const after=before.slice(0,-1)+","+added+"}";
+  const same={changes:[change(before,after)],structure:[]};
+  assert.equal(portableReviewDeltaMatches(same,same,"postgres"),true);
 });
