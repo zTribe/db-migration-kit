@@ -12,51 +12,64 @@ export async function readTargetState(client, schemas, includeStructure = true) 
 }
 
 
-// Portable reviews are captured with a disposable migrator. Some historical
-// ACL grantors may differ when the real login is also a pre-existing role
-// (for example postgres). Compare the *change* to a function ACL, not the
-// unrelated, unchanged historical ACL entries. Complex ACL syntax fails
-// closed rather than using lossy string heuristics.
-function simpleAclEntries(value) {
-  if (typeof value !== "string" || !/^\{[^{}"\\]*\}$/.test(value)) return null;
-  const items=value.slice(1,-1).split(",").filter(Boolean);
-  if(items.some(x=>!/^[^=,{}"\\]+=[A-Za-z*]*\/[^=,{}"\\]+$/.test(x)))return null;
-  if(new Set(items).size!==items.length)return null;
-  return new Set(items);
+// Portable reviews may have a disposable migrator distinct from the real
+// login. In Production the real login can be the historical ACL grantor itself.
+// Compare full before AND after function ACLs, mapping only that proven login
+// to @migration-role. Unrelated roles, grantors, privileges and changes remain
+// strict. Unsupported ACL syntax fails closed.
+function canonicalFunctionAcl(value, actualRole, owner) {
+  if (typeof value !== "string" || !/^\{[^{}"\\]*\}$/.test(value) ||
+      typeof actualRole !== "string" || !actualRole || actualRole === MIGRATION_ROLE)
+    return null;
+  const entries = value.slice(1, -1).split(",").filter(Boolean);
+  const grants = new Map();
+  for (const entry of entries) {
+    const match = /^([^=,{}"\\]*)=([A-Za-z*]*)\/([^=,{}"\\]+)$/.exec(entry);
+    if (!match) return null;
+    const [, rawGrantee, flags, rawGrantor] = match;
+    const map = name => name === actualRole ? MIGRATION_ROLE : name;
+    const grantee = map(rawGrantee);
+    const grantor = map(rawGrantor);
+    if (/^\*/.test(flags)) return null;
+    for (let i = 0; i < flags.length; i++) {
+      const privilege = flags[i];
+      if (privilege === "*") return null;
+      const grantOption = flags[i + 1] === "*";
+      if (grantOption) i++;
+      const key = JSON.stringify([grantee, grantor, privilege]);
+      const effectiveOption = grantOption && !(grantee === owner && grantor === owner);
+      grants.set(key, grants.get(key) === true || effectiveOption);
+    }
+  }
+  return [...grants].sort(([a], [b]) => a.localeCompare(b));
 }
 
-function aclDelta(previous, desired) {
-  const before=simpleAclEntries(previous);
-  const after=simpleAclEntries(desired);
-  if(!before||!after)return null;
-  return {
-    added:[...after].filter(x=>!before.has(x)).sort(),
-    removed:[...before].filter(x=>!after.has(x)).sort(),
-  };
+function portableChangeMatches(expected, observed, actualRole) {
+  if (JSON.stringify(expected) === JSON.stringify(observed)) return true;
+  if (expected?.section !== "functions" || observed?.section !== "functions" ||
+      !expected.previous || !expected.desired || !observed.previous || !observed.desired ||
+      JSON.stringify(expected.identity) !== JSON.stringify(observed.identity) ||
+      expected.sql !== observed.sql) return false;
+  const stripAcl = ({ acl, ...row }) => row;
+  for (const field of ["previous", "desired"]) {
+    if (JSON.stringify(stripAcl(expected[field])) !== JSON.stringify(stripAcl(observed[field])))
+      return false;
+    const owner=expected[field].owner;
+    if (owner !== MIGRATION_ROLE) return false;
+    const planned=canonicalFunctionAcl(expected[field].acl,actualRole,owner);
+    const actual=canonicalFunctionAcl(observed[field].acl,actualRole,owner);
+    if (!planned || !actual || JSON.stringify(planned) !== JSON.stringify(actual))
+      return false;
+  }
+  return true;
 }
 
-function portableChangeMatches(expected, observed) {
-  if (JSON.stringify(expected)===JSON.stringify(observed)) return true;
-  if(expected?.section!=="functions" || observed?.section!=="functions" ||
-     !expected.previous || !expected.desired || !observed.previous || !observed.desired ||
-     JSON.stringify(expected.identity)!==JSON.stringify(observed.identity) ||
-     expected.sql!==observed.sql) return false;
-  const stripAcl=({acl,...row})=>row;
-  if(JSON.stringify(stripAcl(expected.previous))!==JSON.stringify(stripAcl(expected.desired)) ||
-     JSON.stringify(stripAcl(observed.previous))!==JSON.stringify(stripAcl(observed.desired)) ||
-     JSON.stringify(stripAcl(expected.previous))!==JSON.stringify(stripAcl(observed.previous)))
-    return false;
-  const planned=aclDelta(expected.previous.acl,expected.desired.acl);
-  const actual=aclDelta(observed.previous.acl,observed.desired.acl);
-  return Boolean(planned && actual && JSON.stringify(planned)===JSON.stringify(actual));
-}
-
-export function portableReviewDeltaMatches(expected, observed) {
-  if(expected.changes.length!==observed.changes.length ||
-     expected.structure.length!==observed.structure.length) return false;
-  if(JSON.stringify(expected.structure)!==JSON.stringify(observed.structure))return false;
-  return expected.changes.every((change,index)=>
-    portableChangeMatches(change,observed.changes[index]));
+export function portableReviewDeltaMatches(expected, observed, actualRole) {
+  if (expected.changes.length !== observed.changes.length ||
+      expected.structure.length !== observed.structure.length) return false;
+  if (JSON.stringify(expected.structure) !== JSON.stringify(observed.structure)) return false;
+  return expected.changes.every((change, index) =>
+    portableChangeMatches(change, observed.changes[index], actualRole));
 }
 
 export function guardMigration(version, before, after, review) {
@@ -101,7 +114,8 @@ export function guardMigration(version, before, after, review) {
         initialStates.delete(client);
         if (!initial) throw new Error("Missing migration precondition capture");
         const observed = planMigration(initial, actual);
-        if (!portableReviewDeltaMatches(deltas(plan), deltas(observed))) fail("result", observed);
+        const { rows: [identity] } = await client.query("SELECT current_user AS role");
+        if (!portableReviewDeltaMatches(deltas(plan), deltas(observed), identity.role)) fail("result", observed);
       } else {
         const diff = planMigration(actual, after);
         if (diff.changes.length || diff.structure.length) fail("result", diff);
