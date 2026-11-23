@@ -168,8 +168,8 @@ export function renderDisposableRoleSetup(profile){
 
 /** Deterministic fixture ACL SQL. Pure generator: never executes or connects online. */
 export function renderDisposableAclSetup(profile){
- if(profile.schemaVersion!==1||profile.source!=="production")
-  throw Error("A reviewed Production-only fixture is required");
+ if(profile.schemaVersion!==1||!["production","dev"].includes(profile.source))
+  throw Error("A reviewed Dev or Production checkpoint fixture is required");
  const id=name=>{if(!VALID.test(name))throw Error("Unsafe fixture ACL identifier");return '"'+name+'"';};
  const parse=entry=>{
   const match=/^([a-z_0-9]*)=([a-zA-Z]+)\/([a-z_][a-z0-9_]*)$/.exec(entry);

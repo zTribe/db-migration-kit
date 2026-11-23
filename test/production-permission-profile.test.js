@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { deriveProductionPermissionProfile,compareProductionPermissionProfiles,renderDisposableRoleSetup,verifyProductionPermissionFixture } from "../src/production-permission-profile.js";
+import { deriveProductionPermissionProfile,compareProductionPermissionProfiles,renderDisposableRoleSetup,renderDisposableAclSetup,verifyProductionPermissionFixture } from "../src/production-permission-profile.js";
 function sample(){
  return {postgres_version:"17.11",roles:[
   {rolname:"postgres",rolcanlogin:true,rolsuper:false,rolcreatedb:true,rolcreaterole:true,rolbypassrls:true,rolinherit:true,rolreplication:true},
@@ -84,4 +84,10 @@ test("Production baseline ledger mismatch fails rather than replaying future mig
  assert.equal(profile.baseline.version,"001_chain");
  const changed=sample();changed.migration_ledger[0].checksum="b".repeat(64);
  assert.equal(compareProductionPermissionProfiles(profile,deriveProductionPermissionProfile(changed,cfg)).ok,false);
+});
+
+test("disposable ACL fixture accepts explicitly recorded Dev role grants, never a synthetic or untrusted source",()=>{
+ const dev={...deriveProductionPermissionProfile(sample(),cfg),source:"dev"};
+ assert.match(renderDisposableAclSetup(dev),/REVOKE ALL PRIVILEGES ON SCHEMA/);
+ assert.throws(()=>renderDisposableAclSetup({...dev,source:"unreviewed"}),/reviewed Dev or Production/);
 });

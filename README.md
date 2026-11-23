@@ -250,3 +250,17 @@ the Kit's transactional `CREATE POLICY` probe on the real executing role,
 the immutable migration ledger and effective RLS behavior remain mandatory.
 `ALTER TABLE realtime.messages` is never permitted by this special mode.
 See https://supabase.com/kb/troubleshooting/realtime-must-be-owner-of-table-messages .
+
+### Double environment PG17 permission checkpoints
+
+Use `db-migrate-kit-test checkpoints chat` or `db-migrate-kit-test checkpoints indexer`
+after saving the immutable `db/permission-checkpoints/dev.json` and
+`db/permission-checkpoints/production.json` evidence. The Kit runs the existing
+production-permission replay entrypoint twice in **separate disposable PostgreSQL
+17 Docker clusters**, selecting `MIGRATION_RECORDED_CHECKPOINT_SOURCE=dev`
+and `production` respectively. The project integration test is responsible
+for replaying the immutable migration prefix, applying the selected model's
+non-superuser role/ACL setup, verifying recorded catalog/ledger at the
+checkpoint, then testing pending migrations, rollback protection and idempotence.
+Unlike `production`, `checkpoints` is an explicit two-model release gate.
+Live Supabase delegated policy operations still require provider-login validation.
