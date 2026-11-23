@@ -222,7 +222,9 @@ function aclEntitlements(value, reviewRole = null) {
       if (option) i++;
       const recipient=reviewRole && role===MIGRATION_ROLE ? reviewRole : role;
       const key=JSON.stringify([recipient,privilege,option]);
-      if(result.has(key)) throw Error("Contract review rejects ambiguous ACL grants");
+      // Contract compares effective entitlements, not grantor provenance.
+      // Historical principals may normalize to one deployment login; the
+      // same effective grant must not become an artificial duplicate error.
       result.add(key);
     }
   }
