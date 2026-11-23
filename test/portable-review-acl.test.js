@@ -115,33 +115,45 @@ test("portable guard refuses alias collision when migrator is not historical fun
 });
 
 
-test("Lite contract accepts identical new grant with unrelated historical grantors",()=>{
-  assert.equal(contractChangeMatches(reviewedChange,observed.changes[0],"postgres"),true);
+const liveOld = "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}";
+const liveNew = liveOld.slice(0,-1)+",chat_api_runtime_owner=X/postgres}";
+const liveContractChange=change(liveOld,liveNew,{
+  previous:{...reviewedChange.previous,acl:liveOld},
+  desired:{...reviewedChange.desired,acl:liveNew}
 });
 
-test("Lite contract rejects extra grants and changed role or DEFINER",()=>{
-  const base=runtimeBase;
-  const desired=base.slice(0,-1)+","+added+",rogue=X/@migration-role}";
-  assert.equal(contractChangeMatches(reviewedChange,change(base,desired),"postgres"),false);
-  assert.equal(contractChangeMatches(reviewedChange,change(base,base.slice(0,-1)+","+added+"}",{
-    desired:{...observed.changes[0].desired,security_definer:true}
-  }),"postgres"),false);
-  assert.equal(contractChangeMatches(reviewedChange,change(base,base.slice(0,-1)+","+added+"}",{
-    desired:{...observed.changes[0].desired,owner:"unrelated_owner"}
-  }),"postgres"),false);
-  assert.equal(contractChangeMatches(reviewedChange,change(base,base.slice(0,-1)+","+added+"}",{
-    identity:["app","unexpected_function",""]
-  }),"postgres"),false);
+test("Lite contract accepts reviewed new grant despite different historical grantors",()=>{
+  assert.equal(contractChangeMatches(reviewedChange,liveContractChange,"postgres"),true);
 });
 
-test("Lite contract maps only explicit migration-role alias, not historical identities",()=>{
-  const prior="{@migration-role=X/@migration-role}";
-  const next=prior.slice(0,-1)+",authenticated=X/@migration-role}";
-  const expected=change(prior,next);
-  const observedChange=change("{chat_ci_migrator=X/chat_ci_migrator}",
-    "{chat_ci_migrator=X/chat_ci_migrator,authenticated=X/chat_ci_migrator}",{
-      previous:{...change(prior,next).previous,owner:"chat_ci_migrator",acl:"{chat_ci_migrator=X/chat_ci_migrator}"},
-      desired:{...change(prior,next).desired,owner:"chat_ci_migrator",acl:"{chat_ci_migrator=X/chat_ci_migrator,authenticated=X/chat_ci_migrator}"}
-    });
-  assert.equal(contractChangeMatches(expected,observedChange,"chat_ci_migrator"),true);
+test("Lite contract rejects extra grants, wrong owner, changed DEFINER and target",()=>{
+  const unexpected=liveNew.slice(0,-1)+",rogue=X/postgres}";
+  assert.equal(contractChangeMatches(reviewedChange,{
+    ...liveContractChange,
+    desired:{...liveContractChange.desired,acl:unexpected}
+  },"postgres"),false);
+  assert.equal(contractChangeMatches(reviewedChange,{
+    ...liveContractChange,
+    desired:{...liveContractChange.desired,security_definer:true}
+  },"postgres"),false);
+  assert.equal(contractChangeMatches(reviewedChange,{
+    ...liveContractChange,
+    desired:{...liveContractChange.desired,owner:"unrelated_owner"}
+  },"postgres"),false);
+  assert.equal(contractChangeMatches(reviewedChange,{
+    ...liveContractChange,identity:["app","unexpected_function",""]
+  },"postgres"),false);
+});
+
+test("Lite contract maps only explicit migration-role placeholder",()=>{
+  const prev="{@migration-role=X/@migration-role}";
+  const next=prev.slice(0,-1)+",authenticated=X/@migration-role}";
+  const expected=change(prev,next);
+  const rawPrevious="{chat_ci_migrator=X/chat_ci_migrator}";
+  const rawDesired=rawPrevious.slice(0,-1)+",authenticated=X/chat_ci_migrator}";
+  const actual=change(rawPrevious,rawDesired,{
+    previous:{...expected.previous,owner:"chat_ci_migrator",acl:rawPrevious},
+    desired:{...expected.desired,owner:"chat_ci_migrator",acl:rawDesired}
+  });
+  assert.equal(contractChangeMatches(expected,actual,"chat_ci_migrator"),true);
 });
