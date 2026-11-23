@@ -33,7 +33,7 @@ test("portable guard rejects missing, extra or revoked privileges",()=>{
 test("portable guard rejects wrong grantor, changed grant options, object definition and unsafe ACL syntax",()=>{
   const after=runtimeBase.slice(0,-1)+","+added+"}";
   assert.equal(portableReviewDeltaMatches(reviewed,{...observed,changes:[
-    change(runtimeBase,after.replace(added,"chat_api_runtime_owner=X/postgres"))
+    change(runtimeBase,after.replace(added,"chat_api_runtime_owner=X/unrelated_grantor"))
   ]},"postgres"),false);
   assert.equal(portableReviewDeltaMatches(reviewed,{...observed,changes:[
     change(runtimeBase,after.replace(added,"chat_api_runtime_owner=X*/@migration-role"))
