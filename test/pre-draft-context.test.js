@@ -63,3 +63,20 @@ test("recorded migrator BYPASSRLS is disclosed rather than treated as runtime ac
   assert.ok(result.issues.some(x=>x.code==="MIGRATOR_BYPASSES_RLS"));
   assert.equal(result.releaseApproved,false);
 });
+
+test("provided snapshots must include all Kit structure sections",()=>{
+ assert.equal(run(["relation:chain.market"],{snapshotSource:"provided-snapshot"}).blocked,true);
+ assert.throws(()=>run(["relation:chain.market"],{snapshot:{...snapshot,schema:{tables:[]}}}),/missing catalog section/);
+});
+test("contradictory schema and permission catalogs are rejected",()=>{
+ const schema={tables:[],columns:[],constraints:[],indexes:[],triggers:[],functions:[],policies:[],publications:[]};
+ const result=run(["relation:chain.market"],{snapshot:{...snapshot,schema}});
+ assert.equal(result.blocked,true);
+ assert.ok(result.issues.some(x=>x.code==="CATALOG_DISAGREEMENT"));
+});
+test("historical permission profile behind branch HEAD is not silently treated as current",()=>{
+ const result=run(["relation:chain.market"],{historyAfterBaseline:1});
+ assert.equal(result.historyAfterBaseline,1);
+ assert.ok(result.issues.some(x=>x.code==="PERMISSION_BASELINE_BEHIND_HEAD"));
+ assert.throws(()=>run(["relation:chain.market"],{historyAfterBaseline:-1}),/Invalid history offset/);
+});

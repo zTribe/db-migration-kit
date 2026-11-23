@@ -28,7 +28,8 @@ if (command === "pre-draft") {
   if(get("snapshot")&&source!=="provided-snapshot")throw Error("Explicit --snapshot-source=provided-snapshot required with --snapshot");
   const report=buildPreDraftContext({project,snapshot,profile,ownerPolicy,
     targets:args.filter(x=>x.startsWith("--target=")).map(x=>x.slice(9)),
-    snapshotSource:source,operation:get("operation")??"modify",migrationName:get("name")??null,baselineChecked:true});
+    snapshotSource:source,operation:get("operation")??"modify",migrationName:get("name")??null,
+    baselineChecked:true,historyAfterBaseline:config.files.length-baseline.count});
   console.log(JSON.stringify(report,null,2));
   if(report.blocked)process.exitCode=2;
   process.exit();

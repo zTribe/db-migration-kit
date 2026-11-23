@@ -1,5 +1,6 @@
 /** Advisory facts for migration authors, never approval to modify a database. */
 import { createHash } from "node:crypto";
+import { normalizeSchemaCatalog } from "./schema-audit.js";
 const digest = obj => createHash("sha256").update(JSON.stringify(obj)).digest("hex");
 const ID = /^[a-z_][a-z0-9_]*$/;
 export function parsePreDraftTarget(spec) {
@@ -9,7 +10,7 @@ export function parsePreDraftTarget(spec) {
   return {kind:m[1],schema:m[2],name:m[3],args:m[4]??null};
 }
 const argsKey = s=>String(s??"").trim().toLowerCase().replace(/\s+/g," ");
-export function buildPreDraftContext({project,snapshot,profile,targets,ownerPolicy={},migrationName=null,snapshotSource="expected-target",baselineChecked=false,operation="modify"}={}) {
+export function buildPreDraftContext({project,snapshot,profile,targets,ownerPolicy={},migrationName=null,snapshotSource="expected-target",baselineChecked=false,operation="modify",historyAfterBaseline=0}={}) {
   if(!["chat","indexer"].includes(project))throw Error("Unknown project");
   if(!snapshot?.permissions || !["schemas","objects","functions"].every(k=>Array.isArray(snapshot.permissions[k])))throw Error("Kit permissions catalog required");
   if(profile?.project!==project || profile.source!=="production" || profile.postgresMajor!==17 ||
@@ -18,6 +19,9 @@ export function buildPreDraftContext({project,snapshot,profile,targets,ownerPoli
   if(!Array.isArray(targets)||!targets.length)throw Error("At least one target is required");
   if(!["expected-target","provided-snapshot"].includes(snapshotSource))throw Error("Unknown snapshot source");
   if(!["create","modify"].includes(operation))throw Error("Unknown DDL operation");
+  if(!Number.isSafeInteger(historyAfterBaseline)||historyAfterBaseline<0)throw Error("Invalid history offset");
+  // Do not accept a partial supplied JSON as a complete structure catalog.
+  const structure=snapshot.schema==null?null:normalizeSchemaCatalog(snapshot.schema);
   const issues=[],objects=[],unique=new Set();
   const issue=(severity,code,target,detail)=>issues.push({severity,code,target,detail});
   for(const text of targets) {
@@ -41,12 +45,18 @@ export function buildPreDraftContext({project,snapshot,profile,targets,ownerPoli
     if(matches.length&&operation==="create")issue("block","OBJECT_ALREADY_EXISTS",label,"Object already exists in catalog; choose modify instead of create");
     if(!matches.length&&operation==="create")issue("review","NEW_OBJECT_UNVERIFIED",label,"New object is not in recorded catalog; verify schema CREATE privilege and name collisions");
     if(matches.length>1)issue("block","OVERLOADED_OR_AMBIGUOUS",label,"Specify exact function identity arguments");
+    if(structure){
+      const inStructure=t.kind==="relation"
+        ?structure.tables.some(x=>x.schema_name===t.schema&&x.name===t.name)
+        :structure.functions.some(x=>x.schema_name===t.schema&&x.name===t.name&&(t.args===null||argsKey(x.args)===argsKey(t.args)));
+      if(inStructure!==(matches.length>0))
+        issue("block","CATALOG_DISAGREEMENT",label,"Structure and permissions catalogs disagree on target existence");
+    }
     if(obj&&owner!==profile.migrationRole)issue("review","OWNER_MISMATCH",label,"Owner differs from migration role; verify actual SET/ADMIN/INHERIT or scoped Kit recipe");
     if(obj?.security_definer&&!(obj.configuration??[]).some(x=>String(x).startsWith("search_path=")))
       issue("review","DEFINER_PATH_MISSING",label,"SECURITY DEFINER lacks recorded fixed search_path");
     // Reuse the existing Kit readSchemaCatalogOnClient snapshot. Never
     // infer missing columns or indexes from a permissions-only target.
-    const structure=snapshot.schema;
     const related=key=>Array.isArray(structure?.[key])?structure[key].filter(x=>
       x.schema_name===t.schema && (t.kind==="relation" ? x.table_name===t.name : x.name===t.name)) : [];
     const definition=t.kind==="relation" ? {
@@ -76,10 +86,12 @@ export function buildPreDraftContext({project,snapshot,profile,targets,ownerPoli
   if(migrator.rolbypassrls===true)issue("review","MIGRATOR_BYPASSES_RLS","project","Recorded migration login has BYPASSRLS; test runtime roles separately for actual RLS enforcement");
   issue("review","LIVE_LEDGER_UNVERIFIED","project","Check actual Dev/Prod ledger, checksum and database identity read-only");
   issue("review","TARGET_ROLE_UNVERIFIED","project","Check actual migration login DDL capabilities and real PG17 replay");
-  if(snapshot.schema===null)issue("review","SCHEMA_DEFINITIONS_MISSING","project","Permission-only snapshot lacks columns/indexes/constraints");
+  if(structure===null)issue(snapshotSource==="provided-snapshot"?"block":"review","SCHEMA_DEFINITIONS_MISSING","project","Permission-only snapshot lacks columns/indexes/constraints");
+  if(historyAfterBaseline>0)issue("review","PERMISSION_BASELINE_BEHIND_HEAD","project",
+    historyAfterBaseline+" historical migration(s) follow the recorded permission-profile baseline; recheck Owner/ACL changes");
   if(snapshotSource==="expected-target")issue("review","EXPECTED_NOT_LIVE","project","migration-target.json is expected catalog, not live database proof");
   return {kind:"KIT_AI_PRE_DRAFT_CONTEXT",approved:false,releaseApproved:false,project,migrationName,
-    snapshotSource,operation,recordedMigrationRole:profile.migrationRole,permissionBaseline:profile.baseline??null,
+    snapshotSource,operation,historyAfterBaseline,recordedMigrationRole:profile.migrationRole,permissionBaseline:profile.baseline??null,
     baselineChecked,blocked:issues.some(x=>x.severity==="block"),objects,issues,
     provenance:{snapshotSha256:digest(snapshot),profileSha256:digest(profile)},
     next:"Review unknowns and application consumers before SQL; afterwards Kit draft-check and disposable PG17 prepare are mandatory."};
