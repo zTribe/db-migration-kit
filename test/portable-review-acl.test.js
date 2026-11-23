@@ -157,3 +157,20 @@ test("Lite contract maps only explicit migration-role placeholder",()=>{
   });
   assert.equal(contractChangeMatches(expected,actual,"chat_ci_migrator"),true);
 });
+
+
+test("Lite contract deduplicates identical effective historic owner and migrator grants",()=>{
+  const prior="{postgres=X/postgres,@migration-role=X/postgres}";
+  const reviewedNew=prior.slice(0,-1)+",authenticated=X/postgres}";
+  const actualBefore="{postgres=X/postgres}";
+  const actualAfter=actualBefore.slice(0,-1)+",authenticated=X/postgres}";
+  const expected=change(prior,reviewedNew,{
+    previous:{...reviewedChange.previous,owner:"postgres",acl:prior},
+    desired:{...reviewedChange.desired,owner:"postgres",acl:reviewedNew}
+  });
+  const actual=change(actualBefore,actualAfter,{
+    previous:{...reviewedChange.previous,owner:"postgres",acl:actualBefore},
+    desired:{...reviewedChange.desired,owner:"postgres",acl:actualAfter}
+  });
+  assert.equal(contractChangeMatches(expected,actual,"postgres"),true);
+});
