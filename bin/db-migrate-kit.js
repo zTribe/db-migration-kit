@@ -16,7 +16,12 @@ if (command === "pre-draft") {
   if(!project)throw Error("pre-draft needs Chat or Indexer migration config");
   const dir=dirname(configPath);
   const profile=JSON.parse(await readFile(pathResolve(dir,get("profile")??"production-permission-profile.json"),"utf8"));
-  const snapshot=JSON.parse(await readFile(pathResolve(dir,get("snapshot")??"migration-target.json"),"utf8"));
+  const rawSnapshot=await readFile(pathResolve(dir,get("snapshot")??"migration-target.json"),"utf8");
+  const { parseLiveEnvironmentSnapshot,liveSnapshotToKitTargetState }=
+    await import("../src/live-environment-snapshot.js");
+  const parsedSnapshot=rawSnapshot.trimStart().startsWith("{")?JSON.parse(rawSnapshot):null;
+  const snapshot=parsedSnapshot?.permissions?parsedSnapshot:
+    liveSnapshotToKitTargetState(parseLiveEnvironmentSnapshot(rawSnapshot));
   const ownerPolicy=JSON.parse(await readFile(join(dir,"owner-maintenance-policy.json"),"utf8"));
   const baseline=profile.baseline, filename=baseline?.version+".sql";
   const index=config.files.indexOf(filename);
