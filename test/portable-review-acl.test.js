@@ -14,7 +14,10 @@ function change(before, after, overrides={}) {
     previous:row(before),desired:row(after),sql:null,...overrides
   };
 }
-const reviewed = { changes:[change(reviewedBase, reviewedBase.slice(0,-1)+","+added+"}")], structure:[] };
+const reviewedChange = change(reviewedBase, reviewedBase.slice(0,-1)+","+added+"}");
+reviewedChange.previous.owner = "postgres";
+reviewedChange.desired.owner = "postgres";
+const reviewed = { changes:[reviewedChange], structure:[] };
 const observed = { changes:[change(runtimeBase, runtimeBase.slice(0,-1)+","+added+"}")], structure:[] };
 
 test("portable guard accepts identical new EXECUTE grant despite unchanged historical ACL grantor",()=>{
@@ -59,4 +62,12 @@ test("portable guard rejects pre-existing privilege drift even if no SQL changes
 });
 test("portable guard only permits identity overlap for the actual migrator",()=>{
   assert.equal(portableReviewDeltaMatches(reviewed,observed,"some_other_migrator"),false);
+});
+
+test("portable guard rejects unrelated owner even when the ACL is otherwise identical",()=>{
+  const wrong=change(runtimeBase,runtimeBase.slice(0,-1)+","+added+"}",{
+    previous:{...observed.changes[0].previous,owner:"other_owner"},
+    desired:{...observed.changes[0].desired,owner:"other_owner"}
+  });
+  assert.equal(portableReviewDeltaMatches(reviewed,{changes:[wrong],structure:[]},"postgres"),false);
 });
