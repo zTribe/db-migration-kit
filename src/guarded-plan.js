@@ -59,7 +59,11 @@ function hasAmbiguousMigratorAlias(row, actualRole) {
     const grantee=parts[0]?.split("=")[0];
     return grantee===name || parts[1]===name;
   });
-  return hasRole(actualRole) && hasRole(MIGRATION_ROLE);
+  // Historical owner and the disposable migrator can both be recorded in
+  // a reviewed ACL. They may collapse to ONE principal only if the real
+  // deployment login is that historical function owner. The complete ACL
+  // still has to match after canonicalization; extra or missing grants fail.
+  return hasRole(actualRole) && hasRole(MIGRATION_ROLE) && row.owner !== actualRole;
 }
 
 function portableReviewedObjectMatches(expected, actual, role, section) {
@@ -121,6 +125,8 @@ function portableChangeMatches(expected, observed, actualRole) {
     if (JSON.stringify(stripAcl(expected[field])) !== JSON.stringify(stripAcl(observed[field])))
       return false;
     if (stripAcl(expected[field]).owner !== MIGRATION_ROLE) return false;
+    // Different reviewed owner names may only map together when the
+    // actual migrator IS the historical owner, never merely a grantee.
     const planned=canonicalFunctionAcl(expected[field].acl,actualRole,MIGRATION_ROLE);
     const actual=canonicalFunctionAcl(observed[field].acl,actualRole,MIGRATION_ROLE);
     if (!planned || !actual || JSON.stringify(planned) !== JSON.stringify(actual))
