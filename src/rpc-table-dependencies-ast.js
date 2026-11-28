@@ -23,19 +23,19 @@ function readName(parts){
   return p.length === 2 && p.every(x=>typeof x==="string")? p.join(".").toLowerCase():null;
 }
 /** Extract schema-qualified relations and function calls from parsed SQL. */
-function walkSqlTree(tree,tables,calls,warnings){
+function walkSqlTree(tree,tables,calls,warnings,visibleCtes=new Set()){
   if(!tree||typeof tree!=="object")return;
-  if(Array.isArray(tree)){for(const x of tree)walkSqlTree(x,tables,calls,warnings);return;}
-  function relation(r){
+  if(Array.isArray(tree)){for(const x of tree)walkSqlTree(x,tables,calls,warnings,visibleCtes);return;}
+  function relation(r,allowCte){
     if(!r||typeof r.relname!=="string"){warnings.add("unsupported-relation-node");return;}
     if(typeof r.schemaname==="string")tables.add(norm(r.schemaname+"."+r.relname));
-    else warnings.add("unqualified-relation:"+r.relname);
+    else if(!allowCte||!visibleCtes.has(r.relname))warnings.add("unqualified-relation:"+r.relname);
   }
-  if(tree.RangeVar)relation(tree.RangeVar);
-  // libpg_query represents DML targets as bare relation objects, unlike
-  // FROM/JOIN expression nodes wrapped in RangeVar.
+  if(tree.RangeVar)relation(tree.RangeVar,true);
+  // DML targets must resolve to real tables even if a visible CTE shares
+  // their name; libpg_query encodes them as bare relation objects.
   for(const kind of ["InsertStmt","UpdateStmt","DeleteStmt","MergeStmt"]){
-    if(tree[kind])relation(tree[kind].relation);
+    if(tree[kind])relation(tree[kind].relation,false);
   }
   if(tree.FuncCall){
     const fn=readName(tree.FuncCall.funcname);
@@ -44,9 +44,34 @@ function walkSqlTree(tree,tables,calls,warnings){
   if(tree.CreateStmt||tree.CreateFunctionStmt||tree.AlterTableStmt||tree.ViewStmt||tree.CreateTrigStmt){
     warnings.add("unsupported-sql-statement");
   }
+  // WithClause is attached to the statement payload. Nonrecursive CTEs
+  // see only preceding siblings; recursive WITH exposes all sibling names.
+  // Never leak a name into an outer/sibling statement or normalize quoted
+  // identifiers (PostgreSQL's parser already folds unquoted names).
+  const withClause=tree.withClause?.WithClause??tree.withClause;
+  let scope=visibleCtes;
+  if(withClause){
+    scope=new Set(visibleCtes);
+    const entries=withClause.ctes;
+    if(!Array.isArray(entries)||!entries.length){
+      warnings.add("unsupported-cte-node");
+      walkSqlTree(withClause,tables,calls,warnings,visibleCtes);
+    }else{
+      const ctes=entries.map(x=>x.CommonTableExpr??x);
+      const valid=cte=>cte&&typeof cte.ctename==="string"&&cte.ctename.length>0&&cte.ctequery;
+      if(ctes.some(cte=>!valid(cte)))warnings.add("unsupported-cte-node");
+      if(withClause.recursive){
+        for(const cte of ctes)if(valid(cte))scope.add(cte.ctename);
+      }
+      for(const cte of ctes){
+        walkSqlTree(cte,tables,calls,warnings,scope);
+        if(!withClause.recursive&&valid(cte))scope.add(cte.ctename);
+      }
+    }
+  }
   for(const [key,value] of Object.entries(tree)){
-    if(key==="location"||key==="stmt_location"||key==="stmt_len")continue;
-    walkSqlTree(value,tables,calls,warnings);
+    if(key==="location"||key==="stmt_location"||key==="stmt_len"||key==="withClause")continue;
+    walkSqlTree(value,tables,calls,warnings,scope);
   }
 }
 async function parseSql(query,tables,calls,warnings,mode=0){
