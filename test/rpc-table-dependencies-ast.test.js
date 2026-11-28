@@ -75,3 +75,35 @@ test("AST: PLpgSQL assignment targets with array subscripts stay parser-driven",
  const r=await run([fn],[]);
  assert.deepEqual(r.results[0].warnings,[]);
 });
+
+test("AST: data-modifying CTE references retain actual UPSERT dependencies",async()=>{
+ const fn=pl("test_fn","WITH windows AS MATERIALIZED (SELECT 1 AS id), consumed AS (INSERT INTO app.buckets (id) SELECT id FROM windows ORDER BY id ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id RETURNING id) SELECT count(*) INTO v_now FROM windows w JOIN consumed c ON c.id=w.id; RETURN v_now;");
+ const r=await run([fn],["app.buckets"]);
+ assert.deepEqual(r.results[0].actualTables,["app.buckets"]);
+ assert.deepEqual(r.results[0].warnings,[]);
+ assert.equal(r.requiresReview,false);
+ assert.equal(r.releaseApproved,false);
+ const missing=await run([fn],[]);
+ assert.deepEqual(missing.results[0].missing,["app.buckets"]);
+ assert.equal(missing.requiresReview,true);
+});
+
+test("AST: CTE scope never hides genuine unqualified dependencies",async()=>{
+ for(const [body,warning] of [
+  ["WITH t AS (SELECT 1 FROM t) SELECT 1 FROM t","t"],
+  ["WITH a AS (SELECT 1 FROM b), b AS (SELECT 1) SELECT 1 FROM a","b"],
+  ["SELECT 1 FROM (WITH t AS (SELECT 1) SELECT 1 FROM t) s JOIN t ON true","t"],
+  ['WITH "T" AS (SELECT 1) SELECT 1 FROM t',"t"],
+  ["WITH t AS (SELECT 1) INSERT INTO t SELECT 1 FROM t","t"],
+  ["WITH t AS (SELECT 1) SELECT 1 FROM t; SELECT 1 FROM t","t"]
+ ]){
+  const r=await run([sql("test_fn",body)],[]);
+  assert.ok(r.results[0].warnings.includes("unqualified-relation:"+warning),body);
+  assert.equal(r.requiresReview,true,body);
+ }
+ const qualified=await run([sql("test_fn","WITH t AS (SELECT 1) SELECT 1 FROM app.t")],[]);
+ assert.deepEqual(qualified.results[0].missing,["app.t"]);
+ const recursive=await run([sql("test_fn","WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM t WHERE n<2) SELECT n FROM t")],[]);
+ assert.deepEqual(recursive.results[0].warnings,[]);
+ assert.equal(recursive.requiresReview,false);
+});
